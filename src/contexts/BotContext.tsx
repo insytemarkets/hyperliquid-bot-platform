@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { StrategyConfig, BotInstance } from '../services/bot-engine/types';
 import { BotEngine } from '../services/bot-engine/BotEngine';
+import { KVService } from '../services/kv/KVService';
 import { useWallet } from './WalletContext';
 
 interface BotContextType {
@@ -62,31 +63,52 @@ export const BotProvider: React.FC<BotProviderProps> = ({ children }) => {
         botEngineRef.current.start();
         console.log('✅ Bot Engine initialized and started');
 
-        // Restore previously deployed bots
-        const savedBots = localStorage.getItem('deployed_bots');
-        if (savedBots) {
-          try {
-            const parsedBots = JSON.parse(savedBots);
-            console.log('🔄 Restoring', parsedBots.length, 'saved bots to engine...');
+        // Restore previously deployed bots from KV
+        try {
+          const savedBots = await KVService.loadBots();
+          if (savedBots.length > 0) {
+            console.log('🔄 Restoring', savedBots.length, 'saved bots from KV to engine...');
             
-            for (const bot of parsedBots) {
+            for (const bot of savedBots) {
               // Find the strategy for this bot
-              const savedStrategies = localStorage.getItem('bot_strategies');
-              if (savedStrategies) {
-                const strategies = JSON.parse(savedStrategies);
-                const strategy = strategies.find((s: StrategyConfig) => s.id === bot.strategyId);
-                if (strategy) {
-                  try {
-                    await botEngineRef.current.deployBot(strategy);
-                    console.log('✅ Restored bot:', bot.name);
-                  } catch (err) {
-                    console.error('❌ Failed to restore bot:', bot.name, err);
-                  }
+              const strategy = await KVService.loadStrategy(bot.strategyId);
+              if (strategy) {
+                try {
+                  await botEngineRef.current.deployBot(strategy);
+                  console.log('✅ Restored bot from KV:', bot.name);
+                } catch (err) {
+                  console.error('❌ Failed to restore bot:', bot.name, err);
                 }
               }
             }
-          } catch (e) {
-            console.error('Failed to restore bots:', e);
+          }
+        } catch (e) {
+          console.error('Failed to restore bots from KV:', e);
+          // Fallback to localStorage
+          const savedBots = localStorage.getItem('deployed_bots');
+          if (savedBots) {
+            try {
+              const parsedBots = JSON.parse(savedBots);
+              console.log('🔄 Fallback: Restoring', parsedBots.length, 'saved bots from localStorage...');
+              
+              for (const bot of parsedBots) {
+                const savedStrategies = localStorage.getItem('bot_strategies');
+                if (savedStrategies) {
+                  const strategies = JSON.parse(savedStrategies);
+                  const strategy = strategies.find((s: StrategyConfig) => s.id === bot.strategyId);
+                  if (strategy) {
+                    try {
+                      await botEngineRef.current.deployBot(strategy);
+                      console.log('✅ Restored bot from localStorage:', bot.name);
+                    } catch (err) {
+                      console.error('❌ Failed to restore bot:', bot.name, err);
+                    }
+                  }
+                }
+              }
+            } catch (parseError) {
+              console.error('Failed to restore bots from localStorage:', parseError);
+            }
           }
         }
       } catch (err) {
@@ -106,42 +128,81 @@ export const BotProvider: React.FC<BotProviderProps> = ({ children }) => {
     };
   }, []);
 
-  // Load strategies from localStorage on mount
+  // Load strategies from KV on mount
   useEffect(() => {
-    const saved = localStorage.getItem('bot_strategies');
-    if (saved) {
+    const loadStrategiesFromKV = async () => {
       try {
-        setStrategies(JSON.parse(saved));
+        const savedStrategies = await KVService.loadStrategies();
+        if (savedStrategies.length > 0) {
+          setStrategies(savedStrategies);
+          console.log('📦 Loaded strategies from KV:', savedStrategies.length);
+        }
       } catch (e) {
-        console.error('Failed to load strategies:', e);
+        console.error('Failed to load strategies from KV:', e);
+        // Fallback to localStorage
+        const fallback = localStorage.getItem('bot_strategies');
+        if (fallback) {
+          try {
+            setStrategies(JSON.parse(fallback));
+            console.log('📂 Fallback: Loaded strategies from localStorage');
+          } catch (parseError) {
+            console.error('Failed to parse fallback strategies:', parseError);
+          }
+        }
       }
-    }
+    };
+    
+    loadStrategiesFromKV();
   }, []);
 
-  // Load deployed bots from localStorage on mount
+  // Load deployed bots from KV on mount
   useEffect(() => {
-    const savedBots = localStorage.getItem('deployed_bots');
-    if (savedBots) {
+    const loadBotsFromKV = async () => {
       try {
-        const parsedBots = JSON.parse(savedBots);
-        console.log('📂 Loading saved bots:', parsedBots.length);
-        setBots(parsedBots);
+        const savedBots = await KVService.loadBots();
+        if (savedBots.length > 0) {
+          setBots(savedBots);
+          console.log('📦 Loaded bots from KV:', savedBots.length);
+        }
       } catch (e) {
-        console.error('Failed to load deployed bots:', e);
+        console.error('Failed to load bots from KV:', e);
+        // Fallback to localStorage
+        const fallback = localStorage.getItem('deployed_bots');
+        if (fallback) {
+          try {
+            const parsedBots = JSON.parse(fallback);
+            setBots(parsedBots);
+            console.log('📂 Fallback: Loaded bots from localStorage:', parsedBots.length);
+          } catch (parseError) {
+            console.error('Failed to parse fallback bots:', parseError);
+          }
+        }
       }
-    }
+    };
+    
+    loadBotsFromKV();
   }, []);
 
-  // Save strategies to localStorage when they change
+  // Save strategies to KV when they change
   useEffect(() => {
     if (strategies.length > 0) {
-      localStorage.setItem('bot_strategies', JSON.stringify(strategies));
+      KVService.saveStrategies(strategies).catch(error => {
+        console.error('Failed to save strategies to KV:', error);
+        // Fallback to localStorage
+        localStorage.setItem('bot_strategies', JSON.stringify(strategies));
+      });
     }
   }, [strategies]);
 
-  // Save deployed bots to localStorage when they change
+  // Save deployed bots to KV when they change
   useEffect(() => {
-    localStorage.setItem('deployed_bots', JSON.stringify(bots));
+    if (bots.length > 0) {
+      KVService.saveBots(bots).catch(error => {
+        console.error('Failed to save bots to KV:', error);
+        // Fallback to localStorage
+        localStorage.setItem('deployed_bots', JSON.stringify(bots));
+      });
+    }
   }, [bots]);
 
   // Connect wallet to bot engine for live trading

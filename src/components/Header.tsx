@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import WalletConnectButton from './WalletConnectButton';
+import { KVStatus } from './KVStatus';
 
 interface HeaderProps {
   activeTab?: string;
@@ -108,6 +109,9 @@ const Header: React.FC<HeaderProps> = ({ activeTab = 'Dashboard' }) => {
               <div className="font-semibold profit">+$45,678.90</div>
             </div>
             
+            {/* KV Status */}
+            <KVStatus className="mr-4" />
+            
             {/* Wallet Connection */}
             <WalletConnectButton />
             {activeTab === 'My Bots' && (
@@ -185,5 +189,6 @@ const Header: React.FC<HeaderProps> = ({ activeTab = 'Dashboard' }) => {
 };
 
 export default Header;
+
 
 

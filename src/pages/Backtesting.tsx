@@ -195,3 +195,4 @@ const Backtesting: React.FC = () => {
 };
 
 export default Backtesting;
+

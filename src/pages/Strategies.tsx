@@ -294,3 +294,4 @@ const Strategies: React.FC = () => {
 };
 
 export default Strategies;
+

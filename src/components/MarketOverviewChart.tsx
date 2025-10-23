@@ -191,3 +191,4 @@ const MarketOverviewChart: React.FC<MarketOverviewChartProps> = ({
 
 export default MarketOverviewChart;
 
+

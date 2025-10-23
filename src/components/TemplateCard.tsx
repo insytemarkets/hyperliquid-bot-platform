@@ -173,3 +173,4 @@ const TemplateCard: React.FC<TemplateCardProps> = ({
 };
 
 export default TemplateCard;
+

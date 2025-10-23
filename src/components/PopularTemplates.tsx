@@ -54,3 +54,4 @@ const PopularTemplates: React.FC = () => {
 };
 
 export default PopularTemplates;
+

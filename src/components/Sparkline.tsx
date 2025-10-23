@@ -64,3 +64,4 @@ const Sparkline: React.FC<SparklineProps> = ({
 };
 
 export default Sparkline;
+

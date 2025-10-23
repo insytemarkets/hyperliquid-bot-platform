@@ -135,3 +135,4 @@ const StrategyFilters: React.FC<StrategyFiltersProps> = ({
 };
 
 export default StrategyFilters;
+

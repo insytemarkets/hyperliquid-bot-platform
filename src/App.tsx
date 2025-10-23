@@ -5,8 +5,10 @@ import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { config } from './config/wallet';
 import { WalletProvider } from './contexts/WalletContext';
-import { BotProvider } from './contexts/BotContext';
+import { BotProvider } from './contexts/BotContextNew';
+import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
+import ProtectedRoute from './components/ProtectedRoute';
 import MyBots from './pages/MyBotsNew';
 import Templates from './pages/Templates';
 import BotBuilder from './pages/BotBuilder';
@@ -113,8 +115,7 @@ function App() {
     };
   }, []);
 
-  return (
-    <WagmiProvider config={config}>
+  return (    <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider>
           <WalletProvider>
@@ -122,16 +123,16 @@ function App() {
               <Router>
                 <div className="App">
                   <Routes>
-                    <Route path="/" element={<Dashboard />} />
-                    <Route path="/dashboard" element={<Dashboard />} />
-                    <Route path="/my-bots" element={<MyBots />} />
-                    <Route path="/templates" element={<Templates />} />
-                    <Route path="/bot-builder" element={<BotBuilder />} />
-                    <Route path="/strategies" element={<Strategies />} />
-                    <Route path="/analytics" element={<Analytics />} />
-                    <Route path="/market-analytics" element={<MarketAnalytics />} />
-                    <Route path="/trading" element={<Trading />} />
-                    <Route path="/backtesting" element={<Backtesting />} />
+                    <Route path="/" element={<Home />} />
+                    <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                    <Route path="/my-bots" element={<ProtectedRoute><MyBots /></ProtectedRoute>} />
+                    <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+                    <Route path="/bot-builder" element={<ProtectedRoute><BotBuilder /></ProtectedRoute>} />
+                    <Route path="/strategies" element={<ProtectedRoute><Strategies /></ProtectedRoute>} />
+                    <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
+                    <Route path="/market-analytics" element={<ProtectedRoute><MarketAnalytics /></ProtectedRoute>} />
+                    <Route path="/trading" element={<ProtectedRoute><Trading /></ProtectedRoute>} />
+                    <Route path="/backtesting" element={<ProtectedRoute><Backtesting /></ProtectedRoute>} />
                   </Routes>
                 </div>
               </Router>

@@ -149,3 +149,7 @@ const MarketSentiment: React.FC<MarketSentimentProps> = ({ indicators }) => {
 export default MarketSentiment;
 
 
+
+
+
+

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
 import StrategyBuilder from '../components/bot/StrategyBuilder';
-import { useBot } from '../contexts/BotContext';
+import { useBot } from '../contexts/BotContextNew';
 import { StrategyConfig } from '../services/bot-engine/types';
 import { StrategyFactory } from '../services/bot-engine';
 
@@ -248,4 +248,5 @@ const StrategiesNew: React.FC = () => {
 };
 
 export default StrategiesNew;
+
 

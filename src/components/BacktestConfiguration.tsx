@@ -205,3 +205,4 @@ const BacktestConfiguration: React.FC<BacktestConfigProps> = ({
 };
 
 export default BacktestConfiguration;
+

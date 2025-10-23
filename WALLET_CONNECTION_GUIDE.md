@@ -120,3 +120,4 @@ To modify wallet configuration:
 - Update `src/contexts/WalletContext.tsx` for connection logic
 - Modify `src/components/WalletConnectButton.tsx` for UI changes
 
+

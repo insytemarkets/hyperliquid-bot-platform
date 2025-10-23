@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
-import { useBot } from '../contexts/BotContext';
-import { BotInstance } from '../services/bot-engine/types';
+import { useBot } from '../contexts/BotContextNew';
+import * as BotAPI from '../services/api/botApi';
 
 const MyBotsNew: React.FC = () => {
-  const { bots, strategies, pauseBot, resumeBot, stopBot } = useBot();
+  const { bots, strategies, pauseBot, resumeBot, stopBot, refreshBots } = useBot();
   const [filterStatus, setFilterStatus] = useState<'all' | 'running' | 'paused' | 'paper' | 'live'>('all');
+  const [testLoading, setTestLoading] = useState(false);
 
   const filteredBots = bots.filter(bot => {
     if (filterStatus === 'all') return true;
@@ -38,6 +39,22 @@ const MyBotsNew: React.FC = () => {
     return `${seconds}s ago`;
   };
 
+  const handleTestBotRunner = async () => {
+    setTestLoading(true);
+    try {
+      console.log('🧪 Testing bot-runner manually...');
+      await BotAPI.triggerBotRunner();
+      console.log('✅ Bot-runner test completed');
+      
+      // Refresh bots to see any changes
+      setTimeout(() => refreshBots(), 2000);
+    } catch (error) {
+      console.error('❌ Bot-runner test failed:', error);
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Header activeTab="My Bots" />
@@ -48,9 +65,29 @@ const MyBotsNew: React.FC = () => {
         <main className="flex-1 overflow-auto bg-gray-50">
           <div className="p-6">
             {/* Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">My Bots</h1>
-              <p className="text-gray-600 mt-1">Monitor and manage your deployed trading bots</p>
+            <div className="mb-6 flex justify-between items-start">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">My Bots</h1>
+                <p className="text-gray-600 mt-1">Monitor and manage your deployed trading bots</p>
+              </div>
+              
+              {/* Test Bot Runner Button */}
+              <button
+                onClick={handleTestBotRunner}
+                disabled={testLoading}
+                className="bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                {testLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Testing...
+                  </>
+                ) : (
+                  <>
+                    🧪 Test Bot Runner
+                  </>
+                )}
+              </button>
             </div>
 
             {/* Overview Stats */}
@@ -173,7 +210,7 @@ const MyBotsNew: React.FC = () => {
             {filteredBots.length > 0 && (
               <div className="space-y-4">
                 {filteredBots.map((bot) => {
-                  const strategy = strategies.find(s => s.id === bot.strategyId);
+                  const strategy = strategies.find(s => s.id === bot.strategy_id);
                   
                   return (
                     <div key={bot.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -230,14 +267,14 @@ const MyBotsNew: React.FC = () => {
                         </div>
                         <div>
                           <div className="text-xs text-gray-500">Running Time</div>
-                          <div className="text-sm font-medium text-gray-900">{formatTime(bot.startedAt)}</div>
+                          <div className="text-sm font-medium text-gray-900">{formatTime(new Date(bot.deployed_at).getTime())}</div>
                         </div>
                       </div>
 
                       {/* Last Activity */}
-                      {bot.lastTradeAt > 0 && (
+                      {bot.last_tick_at && (
                         <div className="text-xs text-gray-500 mb-4">
-                          Last trade: {formatTime(bot.lastTradeAt)}
+                          Last activity: {formatTime(new Date(bot.last_tick_at).getTime())}
                         </div>
                       )}
 
@@ -286,4 +323,5 @@ const MyBotsNew: React.FC = () => {
 };
 
 export default MyBotsNew;
+
 

@@ -77,3 +77,4 @@ const MetricCard: React.FC<MetricCardProps> = ({ metric, size = 'large' }) => {
 };
 
 export default MetricCard;
+

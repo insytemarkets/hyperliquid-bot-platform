@@ -43,3 +43,4 @@ const MonthlyReturns: React.FC<MonthlyReturnsProps> = ({ returns }) => {
 };
 
 export default MonthlyReturns;
+

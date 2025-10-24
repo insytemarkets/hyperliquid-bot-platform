@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
-import { useBot } from '../contexts/BotContextNew';
+import { useBot } from '../contexts/BotContextPure';
 import * as BotAPI from '../services/api/botApi';
 
 const MyBotsNew: React.FC = () => {

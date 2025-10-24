@@ -5,7 +5,7 @@ import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { config } from './config/wallet';
 import { WalletProvider } from './contexts/WalletContext';
-import { BotProvider } from './contexts/BotContextNew';
+import { BotProvider } from './contexts/BotContextPure';
 import Home from './pages/Home';
 import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/ProtectedRoute';

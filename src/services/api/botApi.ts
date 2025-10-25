@@ -12,10 +12,16 @@ const FUNCTIONS_BASE_URL = 'https://oqmaogkrkupqulcregpz.supabase.co/functions/v
  * Get auth headers for API calls
  */
 async function getAuthHeaders() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session }, error } = await supabase.auth.getSession();
+  
+  console.log('🔐 Auth Debug:', { 
+    hasSession: !!session, 
+    hasToken: !!session?.access_token,
+    error: error?.message 
+  });
   
   if (!session?.access_token) {
-    throw new Error('Not authenticated');
+    throw new Error('Unauthorized');
   }
 
   return {

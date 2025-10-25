@@ -133,7 +133,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
 
       // Create Hyperliquid exchange client
       const exchClient = new hl.ExchangeClient({
-        wallet: walletClient,
+        wallet: walletClient as any,
         transport: new hl.HttpTransport({ isTestnet }),
       });
 

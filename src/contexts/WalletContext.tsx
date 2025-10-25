@@ -165,7 +165,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       console.log('🧪 Testing exchange client signature capability...');
       try {
         // Just verify the wallet client is working
-        const chainId = await walletClient.getChainId();
+        const chainId = await (walletClient as any).getChainId();
         console.log('✅ Wallet client verified - Chain ID:', chainId);
       } catch (testErr) {
         console.warn('⚠️ Wallet client test warning:', testErr);

@@ -11,7 +11,6 @@ import json
 from loguru import logger
 from supabase import create_client, Client
 from hyperliquid.info import Info
-from hyperliquid.websocket_manager import WebsocketManager
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -32,14 +31,13 @@ class BotEngine:
     
     def __init__(self):
         self.running_bots: Dict[str, 'BotInstance'] = {}
-        self.ws_manager = None
         
     async def start(self):
         """Start the bot engine"""
         logger.info("🔥 Bot Engine: Initializing...")
         
-        # Start WebSocket manager for market data
-        self.ws_manager = WebsocketManager()
+        # Initialize Hyperliquid Info client for market data
+        logger.info("📡 Connecting to Hyperliquid API...")
         
         # Main loop
         while True:
@@ -66,7 +64,7 @@ class BotEngine:
             
             # Create bot instance if not exists
             if bot_id not in self.running_bots:
-                self.running_bots[bot_id] = BotInstance(bot_data, self.ws_manager)
+                self.running_bots[bot_id] = BotInstance(bot_data)
                 logger.info(f"✅ Loaded bot: {bot_data['name']} ({bot_id})")
             
             # Update bot data
@@ -117,13 +115,12 @@ class BotEngine:
 class BotInstance:
     """Individual bot instance"""
     
-    def __init__(self, bot_data: dict, ws_manager: WebsocketManager):
+    def __init__(self, bot_data: dict):
         self.bot_id = bot_data['id']
         self.user_id = bot_data['user_id']
         self.name = bot_data['name']
         self.mode = bot_data['mode']
         self.strategy = bot_data['strategies']
-        self.ws_manager = ws_manager
         self.positions: List[dict] = []
         self.last_prices: Dict[str, float] = {}
         

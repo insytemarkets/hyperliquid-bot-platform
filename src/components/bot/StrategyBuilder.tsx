@@ -36,6 +36,11 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
       label: 'Cross-Pair Lag',
       description: 'Trade alts when BTC moves before they catch up. High win rate.'
     },
+    {
+      value: 'momentum_breakout',
+      label: 'Momentum Breakout',
+      description: 'Trades strong price momentum moves (>2% change). Real strategy logic.'
+    },
   ];
 
   const availablePairs = ['BTC', 'ETH', 'SOL', 'XRP', 'ARB', 'DOGE', 'AVAX'];

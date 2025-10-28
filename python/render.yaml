@@ -1,0 +1,19 @@
+# Render Blueprint - Hyperliquid Bot Engine
+
+services:
+  - type: worker
+    name: hyperliquid-bot-engine
+    env: python
+    region: oregon
+    plan: starter  # $7/month - 512MB RAM, 0.5 CPU
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot_engine.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false  # Set in Render dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false  # Set in Render dashboard
+      - key: PYTHON_VERSION
+        value: "3.11"
+    autoDeploy: true
+

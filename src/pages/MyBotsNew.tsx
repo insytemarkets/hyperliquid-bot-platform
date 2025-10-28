@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
-import { useBot } from '../contexts/BotContextPure';
+import { useBot } from '../contexts/BotContextNew';
 import * as BotAPI from '../services/api/botApi';
+import BotLogs from '../components/BotLogs';
 
 const MyBotsNew: React.FC = () => {
   const { bots, strategies, pauseBot, resumeBot, stopBot, refreshBots } = useBot();
   const [filterStatus, setFilterStatus] = useState<'all' | 'running' | 'paused' | 'paper' | 'live'>('all');
   const [testLoading, setTestLoading] = useState(false);
+  const [expandedBotId, setExpandedBotId] = useState<string | null>(null);
 
   const filteredBots = bots.filter(bot => {
     if (filterStatus === 'all') return true;
@@ -306,10 +308,19 @@ const MyBotsNew: React.FC = () => {
                         >
                           Stop
                         </button>
+                        <button 
+                          onClick={() => setExpandedBotId(expandedBotId === bot.id ? null : bot.id)}
+                          className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                          📋 {expandedBotId === bot.id ? 'Hide' : 'View'} Logs
+                        </button>
                         <button className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                           View Details
                         </button>
                       </div>
+
+                      {/* Bot Logs */}
+                      <BotLogs botId={bot.id} isOpen={expandedBotId === bot.id} />
                     </div>
                   );
                 })}

@@ -95,6 +95,16 @@ export class StrategyFactory {
           recommended: true,
         };
       
+      case 'momentum_breakout':
+        return {
+          name: 'Momentum Breakout',
+          description: 'Trades strong price momentum moves (>2% change)',
+          riskLevel: 'medium',
+          avgHoldTime: '30-60 seconds',
+          winRate: '65-75%',
+          recommended: true,
+        };
+      
       case 'liquidation_hunter':
         return {
           name: 'Liquidation Hunter',

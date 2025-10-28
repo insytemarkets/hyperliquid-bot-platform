@@ -56,12 +56,20 @@ class BotEngine:
     async def tick(self):
         """Run one tick of the bot engine"""
         # Fetch all running bots from Supabase
-        result = supabase.table('bot_instances')\
-            .select('*, strategies(*)')\
-            .eq('status', 'running')\
-            .execute()
-        
-        bots = result.data if result.data else []
+        try:
+            result = supabase.table('bot_instances')\
+                .select('*, strategies(*)')\
+                .eq('status', 'running')\
+                .execute()
+            
+            bots = result.data if result.data else []
+            logger.info(f"🔍 Found {len(bots)} active bot(s)")
+            
+            if len(bots) == 0:
+                return  # No bots to run
+        except Exception as e:
+            logger.error(f"Failed to fetch bots from Supabase: {e}")
+            return
         
         # Update last_tick_at for all bots
         for bot_data in bots:
@@ -136,7 +144,12 @@ class BotInstance:
     async def tick(self):
         """Run one tick of this bot"""
         # Fetch current prices
-        all_mids = info.all_mids()
+        try:
+            all_mids = info.all_mids()
+        except Exception as e:
+            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+            return
         
         # Update last prices
         for pair in self.strategy['pairs']:

@@ -19,6 +19,11 @@ load_dotenv()
 # Initialize Supabase
 SUPABASE_URL = os.getenv('SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError(f"Missing Supabase credentials! URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
+
+logger.info(f"🔗 Connecting to Supabase: {SUPABASE_URL[:30]}...")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Initialize Hyperliquid

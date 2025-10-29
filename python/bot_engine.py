@@ -189,6 +189,14 @@ class BotInstance:
             await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
+        # Get available coins from meta
+        try:
+            meta = info.meta()
+            available_coins = [asset['name'] for asset in meta['universe']]
+            logger.info(f"📋 Available coins: {available_coins[:10]}...")  # Show first 10
+        except Exception as e:
+            logger.error(f"Failed to fetch meta: {e}")
+        
         logger.info(f"🔍 Analyzing orderbook for pairs: {self.strategy['pairs']}")
         for pair in self.strategy['pairs']:
             # Skip if already have position

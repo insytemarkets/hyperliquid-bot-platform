@@ -189,6 +189,7 @@ class BotInstance:
             await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
+        logger.info(f"🔍 Analyzing orderbook for pairs: {self.strategy['pairs']}")
         for pair in self.strategy['pairs']:
             # Skip if already have position
             if any(p['symbol'] == pair for p in self.positions):
@@ -198,7 +199,9 @@ class BotInstance:
             try:
                 l2_data = info.l2_snapshot(pair)
                 
-                if not l2_data or 'levels' not in l2_data:
+                # Check if API returned error code instead of data
+                if isinstance(l2_data, int) or not l2_data or 'levels' not in l2_data:
+                    logger.warning(f"Invalid L2 data for {pair}: {l2_data}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]

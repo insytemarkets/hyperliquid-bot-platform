@@ -196,7 +196,7 @@ class BotInstance:
             
             # Get L2 order book
             try:
-                l2_data = info.l2_snapshot(pair)
+                l2_data = info.l2_snapshot(coin=pair)
                 
                 if not l2_data or 'levels' not in l2_data:
                     continue
@@ -261,7 +261,7 @@ class BotInstance:
             
             # Get recent candles
             try:
-                candles = info.candles_snapshot(coin=pair, interval='1m', start_time=int((datetime.now().timestamp() - 300) * 1000), end_time=int(datetime.now().timestamp() * 1000))
+                candles = info.candles_snapshot(pair, '1m', int((datetime.now().timestamp() - 300) * 1000), int(datetime.now().timestamp() * 1000))
                 
                 if not candles or len(candles) < 5:
                     continue

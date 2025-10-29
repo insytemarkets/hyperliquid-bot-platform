@@ -26,8 +26,8 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 logger.info(f"🔗 Connecting to Supabase: {SUPABASE_URL[:30]}...")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Initialize Hyperliquid
-info = Info()
+# Initialize Hyperliquid (use mainnet by default, skip websocket for now)
+info = Info(skip_ws=True)
 
 logger.info("🚀 Bot Engine Starting...")
 
@@ -205,11 +205,18 @@ class BotInstance:
             
             # Get L2 order book
             try:
+                logger.debug(f"Fetching L2 snapshot for {pair}...")
                 l2_data = info.l2_snapshot(pair)
+                logger.debug(f"L2 response type: {type(l2_data)}, value: {l2_data}")
                 
                 # Check if API returned error code instead of data
-                if isinstance(l2_data, int) or not l2_data or 'levels' not in l2_data:
-                    logger.warning(f"Invalid L2 data for {pair}: {l2_data}")
+                if isinstance(l2_data, int):
+                    logger.warning(f"❌ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
+                    await self.log('info', f"⚠️ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
+                    continue
+                    
+                if not l2_data or 'levels' not in l2_data:
+                    logger.warning(f"Invalid L2 data structure for {pair}: {l2_data}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]

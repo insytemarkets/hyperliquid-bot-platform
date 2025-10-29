@@ -196,7 +196,7 @@ class BotInstance:
             
             # Get L2 order book
             try:
-                l2_data = info.l2_snapshot(coin=pair)
+                l2_data = info.l2_snapshot(pair)
                 
                 if not l2_data or 'levels' not in l2_data:
                     continue

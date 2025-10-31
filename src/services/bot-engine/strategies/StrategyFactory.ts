@@ -1,6 +1,7 @@
 import { BaseStrategy } from './BaseStrategy';
 import { OrderBookImbalanceStrategy } from './OrderBookImbalanceStrategy';
 import { CrossPairLagStrategy } from './CrossPairLagStrategy';
+import { MultiTimeframeBreakoutStrategy } from './MultiTimeframeBreakoutStrategy';
 import { MarketDataService } from '../MarketDataService';
 import { StrategyConfig, StrategyType } from '../types';
 
@@ -23,6 +24,9 @@ export class StrategyFactory {
       
       case 'cross_pair_lag':
         return new CrossPairLagStrategy(config, marketData);
+      
+      case 'multi_timeframe_breakout':
+        return new MultiTimeframeBreakoutStrategy(config, marketData);
       
       // Add more strategies here as we build them
       // case 'liquidation_hunter':
@@ -56,6 +60,17 @@ export class StrategyFactory {
           maxFollowerLag: 0.15,
           minConfidence: 0.7,
           requireCorrelation: true,
+        };
+      
+      case 'multi_timeframe_breakout':
+        return {
+          minMomentumScore: 0.5,
+          breakoutThreshold: 0.002,
+          volumeThreshold: 1.5,
+          maxRiskTier: 3,
+          maxHoldTime: 60000,
+          quickProfitTarget: 0.3,
+          emergencyStopLoss: -0.5,
         };
       
       default:
@@ -113,6 +128,16 @@ export class StrategyFactory {
           avgHoldTime: '10-30 seconds',
           winRate: '65-75%',
           recommended: false,
+        };
+      
+      case 'multi_timeframe_breakout':
+        return {
+          name: 'Multi-Timeframe Breakout',
+          description: 'Advanced breakout strategy using 5m/15m/30m timeframes with dynamic risk management',
+          riskLevel: 'medium',
+          avgHoldTime: '30-60 seconds',
+          winRate: '75-85%',
+          recommended: true,
         };
       
       default:

@@ -177,6 +177,8 @@ class BotInstance:
             await self.run_orderbook_imbalance_strategy()
         elif self.strategy['type'] == 'momentum_breakout':
             await self.run_momentum_breakout_strategy()
+        elif self.strategy['type'] == 'multi_timeframe_breakout':
+            await self.run_multi_timeframe_breakout_strategy()
         else:
             await self.run_default_strategy()
         
@@ -261,6 +263,183 @@ class BotInstance:
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
+    
+    async def run_multi_timeframe_breakout_strategy(self):
+        """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""
+        if len(self.positions) >= self.strategy['max_positions']:
+            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
+            return
+        
+        logger.info(f"🎯 Running Multi-Timeframe Breakout for pairs: {self.strategy['pairs']}")
+        
+        for pair in self.strategy['pairs']:
+            # Skip if already have position
+            if any(p['symbol'] == pair for p in self.positions):
+                continue
+            
+            try:
+                # Get current price
+                if pair not in self.last_prices:
+                    continue
+                current_price = self.last_prices[pair]
+                
+                # Get timeframe highs (5m, 15m, 30m)
+                timeframes = ['5m', '15m', '30m']
+                highs = {}
+                volumes = {}
+                
+                for tf in timeframes:
+                    try:
+                        # Get candles for timeframe
+                        end_time = int(datetime.now().timestamp() * 1000)
+                        if tf == '5m':
+                            start_time = end_time - (5 * 60 * 1000)
+                            interval = '1m'
+                        elif tf == '15m':
+                            start_time = end_time - (15 * 60 * 1000)
+                            interval = '1m'
+                        else:  # 30m
+                            start_time = end_time - (30 * 60 * 1000)
+                            interval = '1m'
+                        
+                        candles = info.candles_snapshot(pair, interval, start_time, end_time)
+                        
+                        if candles and len(candles) > 0:
+                            # Calculate high and average volume for timeframe
+                            tf_high = max(float(c['h']) for c in candles)
+                            tf_volume = sum(float(c['v']) for c in candles) / len(candles)
+                            
+                            highs[tf] = tf_high
+                            volumes[tf] = tf_volume
+                        else:
+                            highs[tf] = current_price
+                            volumes[tf] = 0
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to get {tf} data for {pair}: {e}")
+                        highs[tf] = current_price
+                        volumes[tf] = 0
+                
+                # Calculate momentum score
+                momentum_score = await self.calculate_momentum_score(pair, current_price)
+                
+                # Calculate volume weight
+                volume_weight = await self.calculate_volume_weight(pair, volumes)
+                
+                # Check breakout conditions
+                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.002)  # 0.2%
+                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.5)
+                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 1.5)
+                
+                # Tier-based breakout detection
+                breaking_30m = current_price > highs['30m'] * (1 + breakout_threshold)
+                breaking_15m = current_price > highs['15m'] * (1 + breakout_threshold)
+                breaking_5m = current_price > highs['5m'] * (1 + breakout_threshold)
+                
+                has_momentum = momentum_score > min_momentum
+                has_volume = volume_weight > volume_threshold
+                
+                # Log analysis
+                await self.log(
+                    'market_data',
+                    f"🎯 {pair} Multi-TF Analysis | Price: ${current_price:.2f} | 5m: ${highs['5m']:.2f} | 15m: ${highs['15m']:.2f} | 30m: ${highs['30m']:.2f}",
+                    {
+                        'pair': pair,
+                        'current_price': current_price,
+                        'highs_5m': highs['5m'],
+                        'highs_15m': highs['15m'],
+                        'highs_30m': highs['30m'],
+                        'momentum_score': momentum_score,
+                        'volume_weight': volume_weight,
+                        'breaking_5m': breaking_5m,
+                        'breaking_15m': breaking_15m,
+                        'breaking_30m': breaking_30m
+                    }
+                )
+                
+                # Entry signals with tier-based confidence
+                confidence = 0
+                reason = ""
+                
+                if breaking_30m and has_momentum and has_volume:
+                    confidence = 0.9
+                    reason = f"Tier 1: Breaking 30m high (${highs['30m']:.2f}) with strong momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
+                elif breaking_15m and has_momentum and has_volume:
+                    confidence = 0.75
+                    reason = f"Tier 2: Breaking 15m high (${highs['15m']:.2f}) with good momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
+                elif breaking_5m and has_momentum:
+                    confidence = 0.6
+                    reason = f"Tier 3: Breaking 5m high (${highs['5m']:.2f}) with momentum ({momentum_score:.2f})"
+                
+                if confidence > 0:
+                    await self.open_position(pair, 'long', current_price)
+                    await self.log('signal', f"🟢 LONG signal: {pair} - {reason}", {
+                        'confidence': confidence,
+                        'tier': 1 if confidence >= 0.9 else (2 if confidence >= 0.75 else 3)
+                    })
+                else:
+                    await self.log('info', f"👀 Monitoring {pair} - No breakout signal", {
+                        'breaking_5m': breaking_5m,
+                        'breaking_15m': breaking_15m,
+                        'breaking_30m': breaking_30m,
+                        'has_momentum': has_momentum,
+                        'has_volume': has_volume
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")
+    
+    async def calculate_momentum_score(self, pair: str, current_price: float) -> float:
+        """Calculate momentum score for multi-timeframe strategy"""
+        try:
+            # Get recent 1-minute candles for momentum calculation
+            end_time = int(datetime.now().timestamp() * 1000)
+            start_time = end_time - (10 * 60 * 1000)  # Last 10 minutes
+            
+            candles = info.candles_snapshot(pair, '1m', start_time, end_time)
+            
+            if not candles or len(candles) < 5:
+                return 0
+            
+            # Calculate price momentum
+            recent_prices = [float(c['c']) for c in candles[-5:]]  # Last 5 minutes
+            older_prices = [float(c['c']) for c in candles[-10:-5]]  # 5-10 minutes ago
+            
+            if not older_prices:
+                return 0
+            
+            recent_avg = sum(recent_prices) / len(recent_prices)
+            older_avg = sum(older_prices) / len(older_prices)
+            
+            momentum = ((recent_avg - older_avg) / older_avg) * 100
+            
+            # Apply volatility bonus
+            price_changes = [abs(recent_prices[i] - recent_prices[i-1]) / recent_prices[i-1] for i in range(1, len(recent_prices))]
+            volatility = sum(price_changes) / len(price_changes) if price_changes else 0
+            volatility_bonus = min(volatility * 10, 2)  # Cap at 2x bonus
+            
+            return momentum * (1 + volatility_bonus)
+            
+        except Exception as e:
+            logger.error(f"Error calculating momentum for {pair}: {e}")
+            return 0
+    
+    async def calculate_volume_weight(self, pair: str, timeframe_volumes: dict) -> float:
+        """Calculate volume weight for multi-timeframe strategy"""
+        try:
+            # Use 5m volume as baseline
+            current_volume = timeframe_volumes.get('5m', 0)
+            baseline_volume = timeframe_volumes.get('15m', current_volume)
+            
+            if baseline_volume == 0:
+                return 1.0
+            
+            volume_ratio = current_volume / baseline_volume
+            return max(0.5, min(3.0, volume_ratio))  # Clamp between 0.5x and 3x
+            
+        except Exception as e:
+            logger.error(f"Error calculating volume weight for {pair}: {e}")
+            return 1.0
     
     async def run_momentum_breakout_strategy(self):
         """Momentum Breakout Strategy"""

@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback } from 'react';
+﻿import React, { useState, useCallback, useEffect } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
 import ComponentSidebar from '../components/ComponentSidebar';
@@ -29,6 +29,64 @@ const BotBuilder: React.FC = () => {
     initialCapital: '$5,000',
     riskLevel: 'Moderate'
   });
+
+  // Handle pre-selected strategy from URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const strategyId = urlParams.get('strategy');
+    
+    if (strategyId === 'multi_timeframe_breakout') {
+      setBotConfig(prev => ({
+        ...prev,
+        name: 'Multi-Timeframe Breakout Bot',
+        riskLevel: 'Medium'
+      }));
+      
+      // Set up nodes for the multi-timeframe breakout strategy
+      setNodes([
+        {
+          id: '1',
+          type: 'trigger',
+          title: 'Multi-Timeframe Monitor',
+          description: 'Monitor 5m/15m/30m price highs',
+          position: { x: 50, y: 50 },
+          parameters: {
+            asset: 'ETH-USD',
+            timeframes: ['5m', '15m', '30m'],
+            breakoutThreshold: '0.2%'
+          },
+          connectors: { inputs: 0, outputs: 1 }
+        },
+        {
+          id: '2',
+          type: 'indicator',
+          title: 'Momentum Score',
+          description: 'Calculate momentum with volume weighting',
+          position: { x: 300, y: 50 },
+          parameters: {
+            minMomentumScore: '0.5',
+            volumeThreshold: '1.5x',
+            lookbackPeriod: '10 bars'
+          },
+          connectors: { inputs: 1, outputs: 1 }
+        },
+        {
+          id: '3',
+          type: 'action',
+          title: 'Tier-Based Entry',
+          description: 'Execute buy orders based on breakout tier',
+          position: { x: 550, y: 50 },
+          parameters: {
+            tier1Confidence: '90%',
+            tier2Confidence: '75%',
+            tier3Confidence: '60%',
+            positionSize: '2%'
+          },
+          connectors: { inputs: 1, outputs: 0 }
+        }
+      ]);
+    }
+  }, []);
 
   const [nodes, setNodes] = useState<StrategyNodeData[]>([
     {

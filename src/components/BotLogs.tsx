@@ -53,6 +53,17 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     }
   }, [isOpen, botId]);
 
+  // Poll for new logs every 2 seconds
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const interval = setInterval(() => {
+      fetchLogs();
+    }, 2000); // Update every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [isOpen, botId]);
+
   // 🔥 REAL-TIME SUBSCRIPTION
   useEffect(() => {
     if (!isOpen) return;
@@ -102,21 +113,21 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
 
   const getLogIcon = (type: string) => {
     switch (type) {
-      case 'trade': return '💰';
-      case 'signal': return '🚀';
-      case 'error': return '❌';
-      case 'market_data': return '📊';
-      default: return '•';
+      case 'trade': return '▸';
+      case 'signal': return '▸';
+      case 'error': return '▸';
+      case 'market_data': return '▸';
+      default: return '▸';
     }
   };
 
   const getLogColor = (type: string) => {
     switch (type) {
-      case 'trade': return 'text-green-400';
-      case 'signal': return 'text-blue-400';
-      case 'error': return 'text-red-400';
-      case 'market_data': return 'text-purple-400';
-      default: return 'text-gray-400';
+      case 'trade': return 'text-green-600';
+      case 'signal': return 'text-blue-600';
+      case 'error': return 'text-red-600';
+      case 'market_data': return 'text-gray-600';
+      default: return 'text-gray-600';
     }
   };
 
@@ -164,14 +175,14 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
                 : 'bg-gray-100 text-gray-600'
             }`}
           >
-            {autoScroll ? '📌 Auto-scroll' : '📌 Paused'}
+            {autoScroll ? 'Auto-scroll' : 'Paused'}
           </button>
           <button
             onClick={fetchLogs}
             disabled={loading}
             className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
           >
-            {loading ? '⏳' : '🔄'}
+            {loading ? 'Loading...' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -180,7 +191,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
       <div 
         ref={logsContainerRef}
         onScroll={handleScroll}
-        className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs"
+        className="bg-gray-50 border border-gray-200 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs"
         style={{
           scrollBehavior: 'smooth',
           fontFamily: 'Consolas, Monaco, "Courier New", monospace'
@@ -209,7 +220,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
               return (
                 <div
                   key={log.id}
-                  className="flex items-start gap-2 hover:bg-gray-800 px-2 py-1 rounded transition-colors"
+                  className="flex items-start gap-2 hover:bg-gray-100 px-2 py-1 rounded transition-colors"
                 >
                   <span className="text-gray-500 flex-shrink-0 w-20">
                     {formatTime(log.created_at)}
@@ -237,7 +248,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
           }}
           className="mt-2 w-full text-xs py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded transition-colors"
         >
-          ⬇️ Jump to Latest
+          Jump to Latest
         </button>
       )}
     </div>

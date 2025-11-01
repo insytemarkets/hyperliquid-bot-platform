@@ -266,7 +266,7 @@ export async function getBotLogs(botId: string, limit: number = 100) {
       {
         id: `log_${Date.now()}_1`,
         bot_id: botId,
-        log_type: 'info',
+        log_type: 'info' as const,
         message: `Bot ${bot.name} is ${bot.status}`,
         data: { status: bot.status },
         created_at: bot.updated_at || bot.deployed_at
@@ -274,7 +274,7 @@ export async function getBotLogs(botId: string, limit: number = 100) {
       {
         id: `log_${Date.now()}_2`,
         bot_id: botId,
-        log_type: 'market_data',
+        log_type: 'market_data' as const,
         message: 'Monitoring market conditions...',
         data: { pairs: ['SOL'] },
         created_at: new Date(Date.now() - 60000).toISOString()

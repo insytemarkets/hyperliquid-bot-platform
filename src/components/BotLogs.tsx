@@ -5,7 +5,7 @@ import { supabase } from '../services/supabase/supabaseClient';
 interface BotLog {
   id: string;
   bot_id: string;
-  type: 'info' | 'trade' | 'signal' | 'error' | 'market_data';
+  log_type: 'info' | 'trade' | 'signal' | 'error' | 'market_data';
   message: string;
   data?: any;
   created_at: string;
@@ -56,7 +56,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'bot_activity',
+          table: 'bot_logs',
           filter: `bot_id=eq.${botId}`,
         },
         (payload) => {
@@ -150,10 +150,10 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
             {logs.map((log) => (
               <div
                 key={log.id}
-                className={`p-2 rounded text-xs ${getLogColor(log.type)}`}
+                className={`p-2 rounded text-xs ${getLogColor(log.log_type)}`}
               >
                 <div className="flex items-start gap-2">
-                  <span className="text-base">{getLogIcon(log.type)}</span>
+                  <span className="text-base">{getLogIcon(log.log_type)}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-medium">{log.message}</span>

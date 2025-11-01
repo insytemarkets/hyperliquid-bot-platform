@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as BotAPI from '../services/api/botApi';
 import { supabase } from '../services/supabase/supabaseClient';
 
@@ -20,14 +20,25 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
   const [logs, setLogs] = useState<BotLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logsEndRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    if (autoScroll && logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [logs]);
 
   const fetchLogs = async () => {
     try {
       setLoading(true);
-      console.log('🔄 BotLogs: Fetching logs for bot:', botId);
       const fetchedLogs = await BotAPI.getBotLogs(botId, 50);
-      console.log('📋 BotLogs: Received', fetchedLogs.length, 'logs');
-      setLogs(fetchedLogs);
+      setLogs(fetchedLogs.reverse()); // Reverse so newest is at bottom
     } catch (error) {
       console.error('❌ BotLogs: Failed to fetch logs:', error);
     } finally {
@@ -42,13 +53,10 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     }
   }, [isOpen, botId]);
 
-  // 🔥 REAL-TIME SUBSCRIPTION with Supabase Realtime
+  // 🔥 REAL-TIME SUBSCRIPTION
   useEffect(() => {
     if (!isOpen) return;
 
-    console.log('🔥 BotLogs: Setting up Realtime subscription for bot:', botId);
-
-    // Subscribe to new logs for this bot
     const channel = supabase
       .channel(`bot_logs_${botId}`)
       .on(
@@ -60,17 +68,14 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
           filter: `bot_id=eq.${botId}`,
         },
         (payload) => {
-          console.log('🔥 REALTIME: New log received!', payload.new);
           const newLog = payload.new as BotLog;
           
-          // Add new log to the top of the list
-          setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 50)); // Keep only 50 most recent
-          
+          // Add new log to bottom, keep only last 50
+          setLogs((prevLogs) => [...prevLogs, newLog].slice(-50));
           setRealtimeConnected(true);
         }
       )
       .subscribe((status) => {
-        console.log('🔥 Realtime subscription status:', status);
         if (status === 'SUBSCRIBED') {
           setRealtimeConnected(true);
         } else if (status === 'CLOSED') {
@@ -78,33 +83,40 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
         }
       });
 
-    // Cleanup subscription on unmount
     return () => {
-      console.log('🛑 BotLogs: Cleaning up Realtime subscription');
       supabase.removeChannel(channel);
       setRealtimeConnected(false);
     };
   }, [isOpen, botId]);
+
+  // Handle manual scroll - disable auto-scroll if user scrolls up
+  const handleScroll = () => {
+    if (logsContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logsContainerRef.current;
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+      setAutoScroll(isAtBottom);
+    }
+  };
 
   if (!isOpen) return null;
 
   const getLogIcon = (type: string) => {
     switch (type) {
       case 'trade': return '💰';
-      case 'signal': return '📊';
+      case 'signal': return '🚀';
       case 'error': return '❌';
-      case 'market_data': return '📈';
-      default: return 'ℹ️';
+      case 'market_data': return '📊';
+      default: return '•';
     }
   };
 
   const getLogColor = (type: string) => {
     switch (type) {
-      case 'trade': return 'text-green-600 bg-green-50';
-      case 'signal': return 'text-blue-600 bg-blue-50';
-      case 'error': return 'text-red-600 bg-red-50';
-      case 'market_data': return 'text-purple-600 bg-purple-50';
-      default: return 'text-gray-600 bg-gray-50';
+      case 'trade': return 'text-green-400';
+      case 'signal': return 'text-blue-400';
+      case 'error': return 'text-red-400';
+      case 'market_data': return 'text-purple-400';
+      default: return 'text-gray-400';
     }
   };
 
@@ -113,74 +125,123 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     return date.toLocaleTimeString('en-US', { 
       hour: '2-digit', 
       minute: '2-digit', 
-      second: '2-digit' 
+      second: '2-digit',
+      hour12: false
     });
+  };
+
+  // Group consecutive market_data logs to reduce spam
+  const shouldShowLog = (log: BotLog, index: number) => {
+    // Always show non-market_data logs
+    if (log.log_type !== 'market_data') return true;
+    
+    // Show market_data every 5th log to reduce spam
+    const marketDataLogs = logs.slice(0, index + 1).filter(l => l.log_type === 'market_data');
+    return marketDataLogs.length % 5 === 0;
   };
 
   return (
     <div className="mt-4 border-t border-gray-200 pt-4">
       <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-gray-900">Bot Activity Logs</h3>
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-semibold text-gray-900">Live Bot Activity</h3>
           {realtimeConnected && (
-            <span className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-1 rounded">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            <span className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
               LIVE
             </span>
           )}
+          <span className="text-xs text-gray-500">
+            {logs.length} logs
+          </span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setAutoScroll(!autoScroll)}
+            className={`text-xs px-2 py-1 rounded transition-colors ${
+              autoScroll 
+                ? 'bg-blue-100 text-blue-700' 
+                : 'bg-gray-100 text-gray-600'
+            }`}
+          >
+            {autoScroll ? '📌 Auto-scroll' : '📌 Paused'}
+          </button>
           <button
             onClick={fetchLogs}
             disabled={loading}
             className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
           >
-            {loading ? '⏳' : '🔄'} Refresh
+            {loading ? '⏳' : '🔄'}
           </button>
         </div>
       </div>
 
-      <div className="bg-gray-50 rounded-lg p-3 max-h-96 overflow-y-auto">
+      {/* Terminal-style log viewer */}
+      <div 
+        ref={logsContainerRef}
+        onScroll={handleScroll}
+        className="bg-gray-900 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs"
+        style={{
+          scrollBehavior: 'smooth',
+          fontFamily: 'Consolas, Monaco, "Courier New", monospace'
+        }}
+      >
         {logs.length === 0 ? (
-          <div className="text-center text-gray-500 text-sm py-8">
-            {loading ? 'Loading logs...' : 'No logs yet. Bot will start logging activity soon.'}
+          <div className="text-center text-gray-500 py-8">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+              </div>
+            ) : (
+              <span className="text-gray-600">Waiting for bot activity...</span>
+            )}
           </div>
         ) : (
-          <div className="space-y-2">
-            {logs.map((log) => (
-              <div
-                key={log.id}
-                className={`p-2 rounded text-xs ${getLogColor(log.log_type)}`}
-              >
-                <div className="flex items-start gap-2">
-                  <span className="text-base">{getLogIcon(log.log_type)}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="font-medium">{log.message}</span>
-                      <span className="text-xs opacity-75 whitespace-nowrap">
-                        {formatTime(log.created_at)}
-                      </span>
-                    </div>
-                    {log.data && (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-xs opacity-75 hover:opacity-100">
-                          View details
-                        </summary>
-                        <pre className="mt-1 text-xs bg-white bg-opacity-50 p-2 rounded overflow-x-auto">
-                          {JSON.stringify(log.data, null, 2)}
-                        </pre>
-                      </details>
-                    )}
-                  </div>
+          <div className="space-y-1">
+            {logs.map((log, index) => {
+              // Skip some market_data logs to reduce spam
+              if (!shouldShowLog(log, index) && log.log_type === 'market_data') {
+                return null;
+              }
+
+              return (
+                <div
+                  key={log.id}
+                  className="flex items-start gap-2 hover:bg-gray-800 px-2 py-1 rounded transition-colors"
+                >
+                  <span className="text-gray-500 flex-shrink-0 w-20">
+                    {formatTime(log.created_at)}
+                  </span>
+                  <span className={`flex-shrink-0 ${getLogColor(log.log_type)}`}>
+                    {getLogIcon(log.log_type)}
+                  </span>
+                  <span className={`flex-1 ${getLogColor(log.log_type)}`}>
+                    {log.message}
+                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
+            <div ref={logsEndRef} />
           </div>
         )}
       </div>
+
+      {/* Scroll to bottom button (appears when not auto-scrolling) */}
+      {!autoScroll && logs.length > 0 && (
+        <button
+          onClick={() => {
+            setAutoScroll(true);
+            scrollToBottom();
+          }}
+          className="mt-2 w-full text-xs py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded transition-colors"
+        >
+          ⬇️ Jump to Latest
+        </button>
+      )}
     </div>
   );
 };
 
 export default BotLogs;
-

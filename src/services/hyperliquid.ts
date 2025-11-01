@@ -178,8 +178,8 @@ class HyperliquidService {
       const response = await this.infoClient.l2Book({ coin });
       return {
         coin,
-        levels: response.levels,
-        time: response.time || Date.now(),
+        levels: response?.levels || [[], []],
+        time: response?.time || Date.now(),
       };
     } catch (error) {
       console.error(`Error fetching L2 book for ${coin}:`, error);
@@ -440,6 +440,15 @@ export const hyperliquidService = new HyperliquidService(false); // Use mainnet
 export const hyperliquidTestnetService = new HyperliquidService(true); // Use testnet
 
 export default HyperliquidService;
+
+
+
+
+
+
+
+
+
 
 
 

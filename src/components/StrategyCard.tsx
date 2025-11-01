@@ -206,3 +206,4 @@ const StrategyCard: React.FC<StrategyCardProps> = ({
 
 export default StrategyCard;
 
+

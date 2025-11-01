@@ -233,3 +233,4 @@ const BacktestResults: React.FC<BacktestResultsProps> = ({
 
 export default BacktestResults;
 
+

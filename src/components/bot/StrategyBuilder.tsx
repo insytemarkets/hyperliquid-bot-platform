@@ -41,6 +41,11 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
       label: 'Momentum Breakout',
       description: 'Trades strong price momentum moves (>2% change). Real strategy logic.'
     },
+    {
+      value: 'multi_timeframe_breakout',
+      label: 'Multi-Timeframe Breakout',
+      description: 'Advanced breakout strategy using 5m/15m/30m timeframes with dynamic risk management, volume analysis, and momentum scoring. Long-only quick scalps with tier-based entries.'
+    },
   ];
 
   const availablePairs = ['BTC', 'ETH', 'SOL', 'XRP', 'ARB', 'DOGE', 'AVAX'];

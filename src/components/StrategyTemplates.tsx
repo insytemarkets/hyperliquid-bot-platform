@@ -74,3 +74,4 @@ const StrategyTemplates: React.FC = () => {
 
 export default StrategyTemplates;
 
+

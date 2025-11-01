@@ -86,3 +86,4 @@ export const AuthButton: React.FC = () => {
     </button>
   );
 };
+

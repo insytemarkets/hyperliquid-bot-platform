@@ -39,7 +39,7 @@ export class MultiTimeframeBreakoutStrategy extends BaseStrategy {
     });
   }
 
-  protected async generateSignal(condition: MarketCondition): Promise<TradingSignal> {
+  private async generateBreakoutSignal(condition: MarketCondition): Promise<TradingSignal> {
     const { coin, price, timestamp } = condition;
     
     // Update price history
@@ -275,10 +275,35 @@ export class MultiTimeframeBreakoutStrategy extends BaseStrategy {
     return { shouldExit: false, reason: '' };
   }
 
+  // Required abstract methods from BaseStrategy
+  protected async onInitialize(): Promise<void> {
+    this.initializeTimeframes();
+  }
+
+  protected async onCleanup(): Promise<void> {
+    this.priceHistory.clear();
+    this.timeframeHighs.clear();
+    this.momentumScores.clear();
+    this.volumeProfiles.clear();
+  }
+
+  protected async analyzeMarket(condition: MarketCondition): Promise<TradingSignal | null> {
+    const signal = await this.generateBreakoutSignal(condition);
+    return signal.type !== 'NONE' ? signal : null;
+  }
+
+  public getStrategyName(): string {
+    return 'Multi-Timeframe Breakout';
+  }
+
+  public getStrategyDescription(): string {
+    return 'Advanced breakout strategy using 5m/15m/30m timeframes with dynamic risk management, volume analysis, and momentum scoring. Long-only quick scalps with tier-based entries.';
+  }
+
   public getStrategyInfo(): { name: string; description: string; parameters: Record<string, any> } {
     return {
-      name: 'Multi-Timeframe Breakout',
-      description: 'Advanced breakout strategy using multiple timeframes with dynamic risk management',
+      name: this.getStrategyName(),
+      description: this.getStrategyDescription(),
       parameters: {
         minMomentumScore: 'Minimum momentum score required for entry (default: 0.5)',
         breakoutThreshold: 'Price breakout threshold as percentage (default: 0.002)',

@@ -182,3 +182,4 @@ const BacktestHistory: React.FC<BacktestHistoryProps> = ({
 
 export default BacktestHistory;
 
+

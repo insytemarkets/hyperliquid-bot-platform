@@ -121,3 +121,4 @@ To modify wallet configuration:
 - Modify `src/components/WalletConnectButton.tsx` for UI changes
 
 
+

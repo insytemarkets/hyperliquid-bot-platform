@@ -21,6 +21,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
   const [loading, setLoading] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -34,32 +35,50 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     scrollToBottom();
   }, [logs]);
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) setLoading(true);
+      
       const fetchedLogs = await BotAPI.getBotLogs(botId, 50);
-      setLogs(fetchedLogs.reverse()); // Reverse so newest is at bottom
+      
+      if (isInitial) {
+        // Initial load: replace all logs
+        setLogs(fetchedLogs.reverse());
+      } else {
+        // Incremental update: only add NEW logs
+        setLogs(prevLogs => {
+          const existingIds = new Set(prevLogs.map(log => log.id));
+          const newLogs = fetchedLogs.filter(log => !existingIds.has(log.id));
+          
+          if (newLogs.length === 0) return prevLogs; // No new logs, no update
+          
+          // Add new logs to the end and keep only last 50
+          return [...prevLogs, ...newLogs.reverse()].slice(-50);
+        });
+      }
+      
+      setLastFetchTime(new Date());
     } catch (error) {
       console.error('❌ BotLogs: Failed to fetch logs:', error);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
   };
 
   // Load initial logs when opened
   useEffect(() => {
     if (isOpen) {
-      fetchLogs();
+      fetchLogs(true); // Initial load with loading indicator
     }
   }, [isOpen, botId]);
 
-  // Poll for new logs every 2 seconds
+  // Poll for new logs every 2 seconds (smooth incremental updates)
   useEffect(() => {
     if (!isOpen) return;
 
     const interval = setInterval(() => {
-      fetchLogs();
-    }, 2000); // Update every 2 seconds
+      fetchLogs(false); // Incremental update without loading indicator
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [isOpen, botId]);
@@ -178,7 +197,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
             {autoScroll ? 'Auto-scroll' : 'Paused'}
           </button>
           <button
-            onClick={fetchLogs}
+            onClick={() => fetchLogs(true)}
             disabled={loading}
             className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
           >

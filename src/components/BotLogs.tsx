@@ -26,14 +26,20 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
-    if (autoScroll && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (autoScroll && logsContainerRef.current) {
+      // Scroll the container itself, not the page
+      logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
   };
 
   useEffect(() => {
-    scrollToBottom();
-  }, [logs]);
+    // Use requestAnimationFrame to avoid layout thrashing
+    if (autoScroll) {
+      requestAnimationFrame(() => {
+        scrollToBottom();
+      });
+    }
+  }, [logs, autoScroll]);
 
   const fetchLogs = async (isInitial = false) => {
     try {
@@ -215,7 +221,6 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
           height: '384px', // Fixed height (h-96 = 24rem = 384px)
           minHeight: '384px',
           maxHeight: '384px',
-          scrollBehavior: 'smooth',
           fontFamily: 'Consolas, Monaco, "Courier New", monospace'
         }}
       >

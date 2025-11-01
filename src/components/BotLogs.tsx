@@ -171,7 +171,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
   };
 
   return (
-    <div className="mt-4 border-t border-gray-200 pt-4">
+    <div className="mt-4 border-t border-gray-200 pt-4 overflow-hidden">
       <div className="flex justify-between items-center mb-3">
         <div className="flex items-center gap-3">
           <h3 className="text-sm font-semibold text-gray-900">Live Bot Activity</h3>
@@ -210,8 +210,11 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
       <div 
         ref={logsContainerRef}
         onScroll={handleScroll}
-        className="bg-gray-50 border border-gray-200 rounded-lg p-4 h-96 overflow-y-auto font-mono text-xs"
+        className="bg-gray-50 border border-gray-200 rounded-lg p-4 overflow-y-auto font-mono text-xs"
         style={{
+          height: '384px', // Fixed height (h-96 = 24rem = 384px)
+          minHeight: '384px',
+          maxHeight: '384px',
           scrollBehavior: 'smooth',
           fontFamily: 'Consolas, Monaco, "Courier New", monospace'
         }}

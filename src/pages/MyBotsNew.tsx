@@ -64,7 +64,7 @@ const MyBotsNew: React.FC = () => {
       <div className="flex h-screen">
         <Sidebar activeItem="My Bots" />
         
-        <main className="flex-1 overflow-auto bg-gray-50">
+        <main className="flex-1 overflow-y-auto bg-gray-50">
           <div className="p-6">
             {/* Header */}
             <div className="mb-6 flex justify-between items-start">
@@ -215,7 +215,7 @@ const MyBotsNew: React.FC = () => {
                   const strategy = strategies.find(s => s.id === bot.strategy_id);
                   
                   return (
-                    <div key={bot.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div key={bot.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 overflow-hidden">
                       {/* Bot Header */}
                       <div className="flex items-start justify-between mb-4">
                         <div className="flex-1">

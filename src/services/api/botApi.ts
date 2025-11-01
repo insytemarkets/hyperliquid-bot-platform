@@ -250,7 +250,7 @@ export async function getBotLogs(botId: string, limit: number = 100) {
   
   try {
     const { data: logs, error } = await supabase
-      .from('bot_logs')
+      .from('bot_activity')
       .select('*')
       .eq('bot_id', botId)
       .order('created_at', { ascending: false })

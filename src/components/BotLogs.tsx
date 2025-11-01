@@ -56,7 +56,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'bot_logs',
+          table: 'bot_activity',
           filter: `bot_id=eq.${botId}`,
         },
         (payload) => {

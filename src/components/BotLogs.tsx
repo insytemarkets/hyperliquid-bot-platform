@@ -5,7 +5,7 @@ import { supabase } from '../services/supabase/supabaseClient';
 interface BotLog {
   id: string;
   bot_id: string;
-  log_type: 'info' | 'trade' | 'signal' | 'error' | 'market_data';
+  type: 'info' | 'trade' | 'signal' | 'error' | 'market_data';
   message: string;
   data?: any;
   created_at: string;
@@ -42,19 +42,47 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     }
   }, [isOpen, botId]);
 
-  // 🔥 REAL-TIME SUBSCRIPTION - TEMPORARILY DISABLED
+  // 🔥 REAL-TIME SUBSCRIPTION with Supabase Realtime
   useEffect(() => {
     if (!isOpen) return;
 
-    console.log('🔄 BotLogs: Real-time disabled, using polling instead');
-    
-    // Poll for updates every 5 seconds
-    const interval = setInterval(() => {
-      fetchLogs();
-    }, 5000);
+    console.log('🔥 BotLogs: Setting up Realtime subscription for bot:', botId);
 
+    // Subscribe to new logs for this bot
+    const channel = supabase
+      .channel(`bot_logs_${botId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'bot_activity',
+          filter: `bot_id=eq.${botId}`,
+        },
+        (payload) => {
+          console.log('🔥 REALTIME: New log received!', payload.new);
+          const newLog = payload.new as BotLog;
+          
+          // Add new log to the top of the list
+          setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 50)); // Keep only 50 most recent
+          
+          setRealtimeConnected(true);
+        }
+      )
+      .subscribe((status) => {
+        console.log('🔥 Realtime subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          setRealtimeConnected(true);
+        } else if (status === 'CLOSED') {
+          setRealtimeConnected(false);
+        }
+      });
+
+    // Cleanup subscription on unmount
     return () => {
-      clearInterval(interval);
+      console.log('🛑 BotLogs: Cleaning up Realtime subscription');
+      supabase.removeChannel(channel);
+      setRealtimeConnected(false);
     };
   }, [isOpen, botId]);
 
@@ -122,10 +150,10 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
             {logs.map((log) => (
               <div
                 key={log.id}
-                className={`p-2 rounded text-xs ${getLogColor(log.log_type)}`}
+                className={`p-2 rounded text-xs ${getLogColor(log.type)}`}
               >
                 <div className="flex items-start gap-2">
-                  <span className="text-base">{getLogIcon(log.log_type)}</span>
+                  <span className="text-base">{getLogIcon(log.type)}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start gap-2">
                       <span className="font-medium">{log.message}</span>

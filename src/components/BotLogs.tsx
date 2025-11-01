@@ -42,47 +42,19 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     }
   }, [isOpen, botId]);
 
-  // 🔥 REAL-TIME SUBSCRIPTION with Supabase Realtime
+  // 🔥 REAL-TIME SUBSCRIPTION - TEMPORARILY DISABLED
   useEffect(() => {
     if (!isOpen) return;
 
-    console.log('🔥 BotLogs: Setting up Realtime subscription for bot:', botId);
+    console.log('🔄 BotLogs: Real-time disabled, using polling instead');
+    
+    // Poll for updates every 5 seconds
+    const interval = setInterval(() => {
+      fetchLogs();
+    }, 5000);
 
-    // Subscribe to new logs for this bot
-    const channel = supabase
-      .channel(`bot_logs_${botId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'bot_activity',
-          filter: `bot_id=eq.${botId}`,
-        },
-        (payload) => {
-          console.log('🔥 REALTIME: New log received!', payload.new);
-          const newLog = payload.new as BotLog;
-          
-          // Add new log to the top of the list
-          setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 50)); // Keep only 50 most recent
-          
-          setRealtimeConnected(true);
-        }
-      )
-      .subscribe((status) => {
-        console.log('🔥 Realtime subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setRealtimeConnected(true);
-        } else if (status === 'CLOSED') {
-          setRealtimeConnected(false);
-        }
-      });
-
-    // Cleanup subscription on unmount
     return () => {
-      console.log('🛑 BotLogs: Cleaning up Realtime subscription');
-      supabase.removeChannel(channel);
-      setRealtimeConnected(false);
+      clearInterval(interval);
     };
   }, [isOpen, botId]);
 

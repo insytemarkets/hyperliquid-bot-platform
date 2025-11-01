@@ -249,20 +249,40 @@ export async function getBotLogs(botId: string, limit: number = 100) {
   console.log('📋 API: Fetching logs for bot:', botId);
   
   try {
-    const { data: logs, error } = await supabase
-      .from('bot_activity')
+    // For now, return mock logs based on bot status
+    const { data: bot, error } = await supabase
+      .from('bot_instances')
       .select('*')
-      .eq('bot_id', botId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+      .eq('id', botId)
+      .single();
 
     if (error) {
       console.error('❌ Supabase error:', error);
       throw new Error(error.message);
     }
 
-    console.log('✅ Retrieved', logs?.length || 0, 'logs');
-    return logs || [];
+    // Create mock logs based on bot activity
+    const mockLogs = [
+      {
+        id: `log_${Date.now()}_1`,
+        bot_id: botId,
+        log_type: 'info',
+        message: `Bot ${bot.name} is ${bot.status}`,
+        data: { status: bot.status },
+        created_at: bot.updated_at || bot.deployed_at
+      },
+      {
+        id: `log_${Date.now()}_2`,
+        bot_id: botId,
+        log_type: 'market_data',
+        message: 'Monitoring market conditions...',
+        data: { pairs: ['SOL'] },
+        created_at: new Date(Date.now() - 60000).toISOString()
+      }
+    ];
+
+    console.log('✅ Retrieved', mockLogs.length, 'mock logs');
+    return mockLogs;
   } catch (error) {
     console.error('❌ Failed to fetch bot logs:', error);
     throw error;

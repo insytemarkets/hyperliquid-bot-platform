@@ -166,20 +166,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     });
   };
 
-  // Group consecutive market_data logs to reduce spam
-  const shouldShowLog = (log: BotLog, index: number) => {
-    // Always show non-market_data logs
-    if (log.log_type !== 'market_data') return true;
-    
-    // Show important market_data (Multi-TF Analysis with highs/lows)
-    if (log.message.includes('Multi-TF') || log.message.includes('High:') || log.message.includes('Low:')) {
-      return true;
-    }
-    
-    // Show other market_data every 10th log to reduce spam
-    const marketDataLogs = logs.slice(0, index + 1).filter(l => l.log_type === 'market_data');
-    return marketDataLogs.length % 10 === 0;
-  };
+  // No filtering needed - backend now controls log frequency
 
   return (
     <div className="mt-4 border-t border-gray-200 pt-4 overflow-hidden">
@@ -243,29 +230,22 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
           </div>
         ) : (
           <div className="space-y-1">
-            {logs.map((log, index) => {
-              // Skip some market_data logs to reduce spam
-              if (!shouldShowLog(log, index) && log.log_type === 'market_data') {
-                return null;
-              }
-
-              return (
-                <div
-                  key={log.id}
-                  className="flex items-start gap-2 hover:bg-gray-100 px-2 py-1 rounded transition-colors"
-                >
-                  <span className="text-gray-500 flex-shrink-0 w-20">
-                    {formatTime(log.created_at)}
-                  </span>
-                  <span className={`flex-shrink-0 ${getLogColor(log.log_type)}`}>
-                    {getLogIcon(log.log_type)}
-                  </span>
-                  <span className={`flex-1 ${getLogColor(log.log_type)}`}>
-                    {log.message}
-                  </span>
-                </div>
-              );
-            })}
+            {logs.map((log) => (
+              <div
+                key={log.id}
+                className="flex items-start gap-2 hover:bg-gray-100 px-2 py-1 rounded transition-colors"
+              >
+                <span className="text-gray-500 flex-shrink-0 w-20">
+                  {formatTime(log.created_at)}
+                </span>
+                <span className={`flex-shrink-0 ${getLogColor(log.log_type)}`}>
+                  {getLogIcon(log.log_type)}
+                </span>
+                <span className={`flex-1 ${getLogColor(log.log_type)}`}>
+                  {log.message}
+                </span>
+              </div>
+            ))}
             <div ref={logsEndRef} />
           </div>
         )}

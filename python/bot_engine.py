@@ -140,6 +140,8 @@ class BotInstance:
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 30  # Cache candles for 30 seconds
         self.market_data_log_id: Optional[str] = None  # Persistent log ID for market data
+        self.last_price_fetch: float = 0  # Track last all_mids() fetch
+        self.price_fetch_interval = 2  # Fetch prices every 2 seconds (not every second)
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -178,18 +180,26 @@ class BotInstance:
     
     async def tick(self):
         """Run one tick of this bot"""
-        # Fetch current prices
-        try:
-            all_mids = info.all_mids()
-        except Exception as e:
-            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
-            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
-            return
+        current_time = datetime.now().timestamp()
         
-        # Update last prices
-        for pair in self.strategy['pairs']:
-            if pair in all_mids:
-                self.last_prices[pair] = float(all_mids[pair])
+        # Only fetch prices every 2 seconds to avoid rate limits
+        if current_time - self.last_price_fetch >= self.price_fetch_interval:
+            try:
+                all_mids = info.all_mids()
+                self.last_price_fetch = current_time
+                
+                # Update last prices
+                for pair in self.strategy['pairs']:
+                    if pair in all_mids:
+                        self.last_prices[pair] = float(all_mids[pair])
+            except Exception as e:
+                logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+                await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+                return
+        
+        # If we don't have prices yet, skip this tick
+        if not self.last_prices:
+            return
         
         # Log market snapshot (updates in place every second - no spam)
         await self.log_market_data(

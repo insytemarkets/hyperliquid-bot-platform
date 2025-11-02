@@ -136,10 +136,44 @@ class BotInstance:
         self.strategy = bot_data['strategies']
         self.positions: List[dict] = []
         self.last_prices: Dict[str, float] = {}
+        self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
+        self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
+        self.candle_cache_ttl = 30  # Cache candles for 30 seconds
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
         self.strategy = bot_data['strategies']
+    
+    async def get_candles_cached(self, pair: str, interval: str, start_time: int, end_time: int):
+        """Fetch candles with caching to avoid rate limits"""
+        cache_key = f"{pair}_{interval}_{start_time}"
+        current_time = datetime.now().timestamp()
+        
+        # Check if we have cached data
+        if cache_key in self.candle_cache:
+            last_fetch = self.last_candle_fetch.get(cache_key, 0)
+            if current_time - last_fetch < self.candle_cache_ttl:
+                logger.debug(f"Using cached candles for {pair} {interval}")
+                return self.candle_cache[cache_key]
+        
+        # Add rate limiting delay (250ms between calls)
+        await asyncio.sleep(0.25)
+        
+        try:
+            candles = info.candles_snapshot(pair, interval, start_time, end_time)
+            
+            # Cache the result
+            self.candle_cache[cache_key] = candles
+            self.last_candle_fetch[cache_key] = current_time
+            
+            return candles
+        except Exception as e:
+            logger.error(f"Error fetching candles for {pair}: {e}")
+            # Return cached data if available, even if expired
+            if cache_key in self.candle_cache:
+                logger.warning(f"Using stale cache for {pair} due to API error")
+                return self.candle_cache[cache_key]
+            return None
     
     async def tick(self):
         """Run one tick of this bot"""
@@ -303,7 +337,7 @@ class BotInstance:
                             start_time = end_time - (30 * 60 * 1000)
                             interval = '1m'
                         
-                        candles = info.candles_snapshot(pair, interval, start_time, end_time)
+                        candles = await self.get_candles_cached(pair, interval, start_time, end_time)
                         
                         if candles and len(candles) > 0:
                             # Calculate high, low and average volume for timeframe
@@ -427,7 +461,7 @@ class BotInstance:
             end_time = int(datetime.now().timestamp() * 1000)
             start_time = end_time - (10 * 60 * 1000)  # Last 10 minutes
             
-            candles = info.candles_snapshot(pair, '1m', start_time, end_time)
+            candles = await self.get_candles_cached(pair, '1m', start_time, end_time)
             
             if not candles or len(candles) < 5:
                 return 0
@@ -489,7 +523,9 @@ class BotInstance:
             
             # Get recent candles
             try:
-                candles = info.candles_snapshot(pair, '1m', int((datetime.now().timestamp() - 300) * 1000), int(datetime.now().timestamp() * 1000))
+                end_time = int(datetime.now().timestamp() * 1000)
+                start_time = int((datetime.now().timestamp() - 300) * 1000)
+                candles = await self.get_candles_cached(pair, '1m', start_time, end_time)
                 
                 if not candles or len(candles) < 5:
                     continue

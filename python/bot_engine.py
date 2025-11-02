@@ -1,5 +1,5 @@
 """
-🔥 REAL-TIME BOT ENGINE - Python Edition
+ðŸ”¥ REAL-TIME BOT ENGINE - Python Edition
 Runs 24/7 on Render, connects to Hyperliquid WebSocket, writes to Supabase
 """
 
@@ -23,13 +23,13 @@ SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError(f"Missing Supabase credentials! URL: {bool(SUPABASE_URL)}, KEY: {bool(SUPABASE_KEY)}")
 
-logger.info(f"🔗 Connecting to Supabase: {SUPABASE_URL[:30]}...")
+logger.info(f"ðŸ”— Connecting to Supabase: {SUPABASE_URL[:30]}...")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Initialize Hyperliquid (use mainnet by default, skip websocket for now)
 info = Info(skip_ws=True)
 
-logger.info("🚀 Bot Engine Starting...")
+logger.info("ðŸš€ Bot Engine Starting...")
 
 class BotEngine:
     """Main bot engine orchestrator"""
@@ -39,10 +39,10 @@ class BotEngine:
         
     async def start(self):
         """Start the bot engine"""
-        logger.info("🔥 Bot Engine: Initializing...")
+        logger.info("ðŸ”¥ Bot Engine: Initializing...")
         
         # Initialize Hyperliquid Info client for market data
-        logger.info("📡 Connecting to Hyperliquid API...")
+        logger.info("ðŸ“¡ Connecting to Hyperliquid API...")
         
         # Main loop
         while True:
@@ -50,7 +50,7 @@ class BotEngine:
                 await self.tick()
                 await asyncio.sleep(1)  # Run every second
             except Exception as e:
-                logger.error(f"❌ Bot Engine error: {e}")
+                logger.error(f"âŒ Bot Engine error: {e}")
                 await asyncio.sleep(5)
     
     async def tick(self):
@@ -63,7 +63,7 @@ class BotEngine:
                 .execute()
             
             bots = result.data if result.data else []
-            logger.info(f"🔍 Found {len(bots)} active bot(s)")
+            logger.info(f"ðŸ” Found {len(bots)} active bot(s)")
             
             if len(bots) == 0:
                 return  # No bots to run
@@ -78,7 +78,7 @@ class BotEngine:
             # Create bot instance if not exists
             if bot_id not in self.running_bots:
                 self.running_bots[bot_id] = BotInstance(bot_data)
-                logger.info(f"✅ Loaded bot: {bot_data['name']} ({bot_id})")
+                logger.info(f"âœ… Loaded bot: {bot_data['name']} ({bot_id})")
             
             # Update bot data
             self.running_bots[bot_id].update_config(bot_data)
@@ -94,7 +94,7 @@ class BotEngine:
                     .execute()
                     
             except Exception as e:
-                logger.error(f"❌ Error running bot {bot_id}: {e}")
+                logger.error(f"âŒ Error running bot {bot_id}: {e}")
                 await self.log_bot_activity(
                     bot_id,
                     bot_data['user_id'],
@@ -107,7 +107,7 @@ class BotEngine:
         active_bot_ids = {b['id'] for b in bots}
         stopped_bots = set(self.running_bots.keys()) - active_bot_ids
         for bot_id in stopped_bots:
-            logger.info(f"🛑 Stopping bot: {bot_id}")
+            logger.info(f"ðŸ›‘ Stopping bot: {bot_id}")
             del self.running_bots[bot_id]
     
     async def log_bot_activity(self, bot_id: str, user_id: str, log_type: str, message: str, data: dict):
@@ -148,7 +148,7 @@ class BotInstance:
             all_mids = info.all_mids()
         except Exception as e:
             logger.error(f"Failed to fetch Hyperliquid prices: {e}")
-            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+            await self.log('error', f"âŒ Failed to fetch market data: {str(e)}", {})
             return
         
         # Update last prices
@@ -159,7 +159,7 @@ class BotInstance:
         # Log market snapshot
         await self.log(
             'market_data',
-            f"📊 Market Snapshot: {len(self.last_prices)} pairs tracked",
+            f"ðŸ“Š Market Snapshot: {len(self.last_prices)} pairs tracked",
             {'prices': self.last_prices}
         )
         
@@ -188,18 +188,18 @@ class BotInstance:
     async def run_orderbook_imbalance_strategy(self):
         """Order Book Imbalance Strategy"""
         if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
+            await self.log('info', f"âš ï¸ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
         # Get available coins from meta
         try:
             meta = info.meta()
             available_coins = [asset['name'] for asset in meta['universe']]
-            logger.info(f"📋 Available coins: {available_coins[:10]}...")  # Show first 10
+            logger.info(f"ðŸ“‹ Available coins: {available_coins[:10]}...")  # Show first 10
         except Exception as e:
             logger.error(f"Failed to fetch meta: {e}")
         
-        logger.info(f"🔍 Analyzing orderbook for pairs: {self.strategy['pairs']}")
+        logger.info(f"ðŸ” Analyzing orderbook for pairs: {self.strategy['pairs']}")
         for pair in self.strategy['pairs']:
             # Skip if already have position
             if any(p['symbol'] == pair for p in self.positions):
@@ -213,8 +213,8 @@ class BotInstance:
                 
                 # Check if API returned error code instead of data
                 if isinstance(l2_data, int):
-                    logger.warning(f"❌ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
-                    await self.log('info', f"⚠️ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
+                    logger.warning(f"âŒ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
+                    await self.log('info', f"âš ï¸ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
                     continue
                     
                 if not l2_data or 'levels' not in l2_data:
@@ -240,7 +240,7 @@ class BotInstance:
                 # Log order book analysis
                 await self.log(
                     'market_data',
-                    f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                    f"ðŸ“Š {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
                     {
                         'pair': pair,
                         'bid_depth': bid_depth,
@@ -254,12 +254,12 @@ class BotInstance:
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
                     await self.open_position(pair, 'long', float(asks[0][0]))
-                    await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"ðŸŸ¢ LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
                     await self.open_position(pair, 'short', float(bids[0][0]))
-                    await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"ðŸ”´ SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                 else:
-                    await self.log('info', f"👀 Monitoring {pair} - No signal (ratio: {imbalance_ratio:.2f}x)", {})
+                    await self.log('info', f"ðŸ‘€ Monitoring {pair} - No signal (ratio: {imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
@@ -267,10 +267,10 @@ class BotInstance:
     async def run_multi_timeframe_breakout_strategy(self):
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""
         if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
+            await self.log('info', f"âš ï¸ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
-        logger.info(f"🎯 Running Multi-Timeframe Breakout for pairs: {self.strategy['pairs']}")
+        logger.info(f"ðŸŽ¯ Running Multi-Timeframe Breakout for pairs: {self.strategy['pairs']}")
         
         for pair in self.strategy['pairs']:
             # Skip if already have position
@@ -373,12 +373,12 @@ class BotInstance:
                 
                 if confidence > 0:
                     await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🟢 LONG signal: {pair} - {reason}", {
+                    await self.log('signal', f"ðŸŸ¢ LONG signal: {pair} - {reason}", {
                         'confidence': confidence,
                         'tier': 1 if confidence >= 0.9 else (2 if confidence >= 0.75 else 3)
                     })
                 else:
-                    await self.log('info', f"👀 Monitoring {pair} - No breakout signal", {
+                    await self.log('info', f"ðŸ‘€ Monitoring {pair} - No breakout signal", {
                         'breaking_5m': breaking_5m,
                         'breaking_15m': breaking_15m,
                         'breaking_30m': breaking_30m,
@@ -444,7 +444,7 @@ class BotInstance:
     async def run_momentum_breakout_strategy(self):
         """Momentum Breakout Strategy"""
         if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
+            await self.log('info', f"âš ï¸ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
         for pair in self.strategy['pairs']:
@@ -469,26 +469,26 @@ class BotInstance:
                 
                 await self.log(
                     'market_data',
-                    f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
+                    f"ðŸ“ˆ {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
                     {'pair': pair, 'momentum': momentum, 'price': current_price}
                 )
                 
                 # Entry signals
                 if momentum > 2.0:
                     await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🚀 LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
+                    await self.log('signal', f"ðŸš€ LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
                 elif momentum < -2.0:
                     await self.open_position(pair, 'short', current_price)
-                    await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
+                    await self.log('signal', f"ðŸ“‰ SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
                 else:
-                    await self.log('info', f"👀 {pair} - Watching (momentum: {momentum:+.2f}%)", {})
+                    await self.log('info', f"ðŸ‘€ {pair} - Watching (momentum: {momentum:+.2f}%)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing momentum for {pair}: {e}")
     
     async def run_default_strategy(self):
         """Default strategy (for testing)"""
-        await self.log('info', f"🤖 Running default strategy for {len(self.strategy['pairs'])} pairs", {})
+        await self.log('info', f"ðŸ¤– Running default strategy for {len(self.strategy['pairs'])} pairs", {})
     
     async def open_position(self, pair: str, side: str, price: float):
         """Open a new position"""
@@ -535,7 +535,7 @@ class BotInstance:
         
         await self.log(
             'trade',
-            f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
+            f"âœ… Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
             {'position_id': position_id, 'side': side, 'price': price}
         )
     
@@ -566,10 +566,10 @@ class BotInstance:
                 .execute()
             
             # Log position status
-            emoji = '💚' if pnl >= 0 else '❤️'
+            emoji = 'ðŸ’š' if pnl >= 0 else 'â¤ï¸'
             await self.log(
                 'info',
-                f"{emoji} {side.upper()} {pair} | Entry: ${entry_price:.2f} → ${current_price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
+                f"{emoji} {side.upper()} {pair} | Entry: ${entry_price:.2f} â†’ ${current_price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
                 {'position_id': position['id'], 'pnl': pnl, 'pnl_pct': pnl_pct}
             )
             
@@ -621,7 +621,7 @@ class BotInstance:
         
         await self.log(
             'trade',
-            f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | P&L: ${pnl:.2f}",
+            f"ðŸ”´ Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | P&L: ${pnl:.2f}",
             {'position_id': position['id'], 'pnl': pnl, 'reason': reason}
         )
     

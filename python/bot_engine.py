@@ -342,7 +342,7 @@ class BotInstance:
                 # Log analysis
                 await self.log(
                     'market_data',
-                    f"🎯 {pair} Multi-TF Analysis | Price: ${current_price:.2f} | 5m: ${highs['5m']:.2f} | 15m: ${highs['15m']:.2f} | 30m: ${highs['30m']:.2f}",
+                    f"{pair} | Price: ${current_price:.2f} | 30m H: ${tf_highs.get('30m', 0):.2f} L: ${tf_lows.get('30m', 0):.2f} | 15m H: ${tf_highs.get('15m', 0):.2f} L: ${tf_lows.get('15m', 0):.2f} | 5m H: ${tf_highs.get('5m', 0):.2f} L: ${tf_lows.get('5m', 0):.2f}",
                     {
                         'pair': pair,
                         'current_price': current_price,

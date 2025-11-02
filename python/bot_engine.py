@@ -139,6 +139,7 @@ class BotInstance:
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 30  # Cache candles for 30 seconds
+        self.tick_count = 0  # Track ticks to reduce log spam
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -177,6 +178,8 @@ class BotInstance:
     
     async def tick(self):
         """Run one tick of this bot"""
+        self.tick_count += 1
+        
         # Fetch current prices
         try:
             all_mids = info.all_mids()
@@ -190,12 +193,13 @@ class BotInstance:
             if pair in all_mids:
                 self.last_prices[pair] = float(all_mids[pair])
         
-        # Log market snapshot
-        await self.log(
-            'market_data',
-            f"📊 Market Snapshot: {len(self.last_prices)} pairs tracked",
-            {'prices': self.last_prices}
-        )
+        # Log market snapshot (only every 30 seconds to reduce spam)
+        if self.tick_count % 30 == 0:
+            await self.log(
+                'market_data',
+                f"📊 Market Snapshot: {len(self.last_prices)} pairs tracked",
+                {'prices': self.last_prices}
+            )
         
         # Load open positions
         result = supabase.table('bot_positions')\
@@ -271,19 +275,20 @@ class BotInstance:
                 
                 imbalance_ratio = bid_depth / ask_depth if ask_depth > 0 else 0
                 
-                # Log order book analysis
-                await self.log(
-                    'market_data',
-                    f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                    {
-                        'pair': pair,
-                        'bid_depth': bid_depth,
-                        'ask_depth': ask_depth,
-                        'imbalance_ratio': imbalance_ratio,
-                        'best_bid': float(bids[0][0]),
-                        'best_ask': float(asks[0][0])
-                    }
-                )
+                # Log order book analysis (only every 30 seconds to reduce spam)
+                if self.tick_count % 30 == 0:
+                    await self.log(
+                        'market_data',
+                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                        {
+                            'pair': pair,
+                            'bid_depth': bid_depth,
+                            'ask_depth': ask_depth,
+                            'imbalance_ratio': imbalance_ratio,
+                            'best_bid': float(bids[0][0]),
+                            'best_ask': float(asks[0][0])
+                        }
+                    )
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
@@ -292,8 +297,7 @@ class BotInstance:
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
                     await self.open_position(pair, 'short', float(bids[0][0]))
                     await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
-                else:
-                    await self.log('info', f"👀 Monitoring {pair} - No signal (ratio: {imbalance_ratio:.2f}x)", {})
+                # Don't log "monitoring" messages - only log actual signals
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
@@ -383,29 +387,30 @@ class BotInstance:
                 has_momentum = momentum_score > min_momentum
                 has_volume = volume_weight > volume_threshold
                 
-                # Log analysis
-                await self.log(
-                    'market_data',
-                    f"{pair} | Price: ${current_price:.2f} | 30m H/L: ${highs['30m']:.2f}/${lows['30m']:.2f} | 15m H/L: ${highs['15m']:.2f}/${lows['15m']:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f}",
-                    {
-                        'pair': pair,
-                        'current_price': current_price,
-                        'highs_5m': highs['5m'],
-                        'highs_15m': highs['15m'],
-                        'highs_30m': highs['30m'],
-                        'lows_5m': lows['5m'],
-                        'lows_15m': lows['15m'],
-                        'lows_30m': lows['30m'],
-                        'momentum_score': momentum_score,
-                        'volume_weight': volume_weight,
-                        'breaking_5m': breaking_5m,
-                        'breaking_15m': breaking_15m,
-                        'breaking_30m': breaking_30m,
-                        'breaking_down_5m': breaking_down_5m,
-                        'breaking_down_15m': breaking_down_15m,
-                        'breaking_down_30m': breaking_down_30m
-                    }
-                )
+                # Log analysis (only every 30 seconds to reduce spam)
+                if self.tick_count % 30 == 0:
+                    await self.log(
+                        'market_data',
+                        f"{pair} | Price: ${current_price:.2f} | 30m H/L: ${highs['30m']:.2f}/${lows['30m']:.2f} | 15m H/L: ${highs['15m']:.2f}/${lows['15m']:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f}",
+                        {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'highs_5m': highs['5m'],
+                            'highs_15m': highs['15m'],
+                            'highs_30m': highs['30m'],
+                            'lows_5m': lows['5m'],
+                            'lows_15m': lows['15m'],
+                            'lows_30m': lows['30m'],
+                            'momentum_score': momentum_score,
+                            'volume_weight': volume_weight,
+                            'breaking_5m': breaking_5m,
+                            'breaking_15m': breaking_15m,
+                            'breaking_30m': breaking_30m,
+                            'breaking_down_5m': breaking_down_5m,
+                            'breaking_down_15m': breaking_down_15m,
+                            'breaking_down_30m': breaking_down_30m
+                        }
+                    )
                 
                 # Entry signals with tier-based confidence (LONG ONLY)
                 confidence = 0
@@ -439,17 +444,7 @@ class BotInstance:
                         'confidence': confidence,
                         'tier': 1 if confidence >= 0.85 else (2 if confidence >= 0.7 else 3)
                     })
-                else:
-                    await self.log('info', f"👀 Monitoring {pair} - No breakout or dip signal", {
-                        'breaking_5m': breaking_5m,
-                        'breaking_15m': breaking_15m,
-                        'breaking_30m': breaking_30m,
-                        'near_low_5m': breaking_down_5m,
-                        'near_low_15m': breaking_down_15m,
-                        'near_low_30m': breaking_down_30m,
-                        'has_momentum': has_momentum,
-                        'has_volume': has_volume
-                    })
+                # Don't log "monitoring" messages - only log actual signals to reduce spam
                     
             except Exception as e:
                 logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")
@@ -534,11 +529,13 @@ class BotInstance:
                 old_price = float(candles[0]['c'])
                 momentum = ((current_price - old_price) / old_price) * 100
                 
-                await self.log(
-                    'market_data',
-                    f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
-                    {'pair': pair, 'momentum': momentum, 'price': current_price}
-                )
+                # Log momentum (only every 30 seconds to reduce spam)
+                if self.tick_count % 30 == 0:
+                    await self.log(
+                        'market_data',
+                        f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
+                        {'pair': pair, 'momentum': momentum, 'price': current_price}
+                    )
                 
                 # Entry signals
                 if momentum > 2.0:
@@ -547,8 +544,7 @@ class BotInstance:
                 elif momentum < -2.0:
                     await self.open_position(pair, 'short', current_price)
                     await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
-                else:
-                    await self.log('info', f"👀 {pair} - Watching (momentum: {momentum:+.2f}%)", {})
+                # Don't log "watching" messages - only log actual signals
                     
             except Exception as e:
                 logger.error(f"Error analyzing momentum for {pair}: {e}")

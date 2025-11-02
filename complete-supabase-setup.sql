@@ -107,3 +107,5 @@ SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' A
 SELECT 'Auth users table exists:' as status;
 SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') as auth_enabled;
 
+
+

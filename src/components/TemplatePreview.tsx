@@ -247,3 +247,5 @@ if (price_diff > threshold) {
 export default TemplatePreview;
 
 
+
+

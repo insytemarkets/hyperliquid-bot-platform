@@ -292,3 +292,5 @@ const TradingInterface: React.FC<TradingInterfaceProps> = ({ selectedPair }) => 
 export default TradingInterface;
 
 
+
+

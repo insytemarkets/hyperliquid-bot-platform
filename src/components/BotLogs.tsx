@@ -89,7 +89,7 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     return () => clearInterval(interval);
   }, [isOpen, botId]);
 
-  // 🔥 REAL-TIME SUBSCRIPTION
+  // 🔥 REAL-TIME SUBSCRIPTION (handles both INSERT and UPDATE)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -108,6 +108,24 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
           
           // Add new log to bottom, keep only last 50
           setLogs((prevLogs) => [...prevLogs, newLog].slice(-50));
+          setRealtimeConnected(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bot_logs',
+          filter: `bot_id=eq.${botId}`,
+        },
+        (payload) => {
+          const updatedLog = payload.new as BotLog;
+          
+          // Update existing log in place (no spam, just updates!)
+          setLogs((prevLogs) => 
+            prevLogs.map(log => log.id === updatedLog.id ? updatedLog : log)
+          );
           setRealtimeConnected(true);
         }
       )

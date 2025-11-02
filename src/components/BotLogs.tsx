@@ -171,9 +171,14 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     // Always show non-market_data logs
     if (log.log_type !== 'market_data') return true;
     
-    // Show market_data every 5th log to reduce spam
+    // Show important market_data (Multi-TF Analysis with highs/lows)
+    if (log.message.includes('Multi-TF') || log.message.includes('High:') || log.message.includes('Low:')) {
+      return true;
+    }
+    
+    // Show other market_data every 10th log to reduce spam
     const marketDataLogs = logs.slice(0, index + 1).filter(l => l.log_type === 'market_data');
-    return marketDataLogs.length % 5 === 0;
+    return marketDataLogs.length % 10 === 0;
   };
 
   return (

@@ -138,7 +138,7 @@ class BotInstance:
         self.last_prices: Dict[str, float] = {}
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
-        self.candle_cache_ttl = 30  # Cache candles for 30 seconds
+        self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
         self.last_market_log_time: float = 0  # Track last market data log
         self.market_log_interval = 30  # Log market data every 30 seconds
         
@@ -158,8 +158,8 @@ class BotInstance:
                 logger.debug(f"Using cached candles for {pair} {interval}")
                 return self.candle_cache[cache_key]
         
-        # Add rate limiting delay (250ms between calls)
-        await asyncio.sleep(0.25)
+        # Add rate limiting delay (1 second between calls to avoid 429 errors)
+        await asyncio.sleep(1.0)
         
         try:
             candles = info.candles_snapshot(pair, interval, start_time, end_time)
@@ -393,23 +393,39 @@ class BotInstance:
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_market_log_time >= self.market_log_interval:
-                    # Calculate how close we are to triggers
+                    # Calculate how close we are to triggers for ALL timeframes
                     high_5m_distance = ((current_price / highs['5m']) - 1) * 100
                     low_5m_distance = ((lows['5m'] / current_price) - 1) * 100
+                    high_15m_distance = ((current_price / highs['15m']) - 1) * 100
+                    low_15m_distance = ((lows['15m'] / current_price) - 1) * 100
+                    high_30m_distance = ((current_price / highs['30m']) - 1) * 100
+                    low_30m_distance = ((lows['30m'] / current_price) - 1) * 100
                     
                     await self.log(
                         'market_data',
-                        f"{pair} | Price: ${current_price:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f} | To High: {high_5m_distance:+.3f}% | To Low: {low_5m_distance:+.3f}% | Vol: {volume_weight:.2f}x",
+                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/{lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x",
                         {
                             'pair': pair,
                             'current_price': current_price,
+                            'highs_30m': highs['30m'],
+                            'lows_30m': lows['30m'],
+                            'highs_15m': highs['15m'],
+                            'lows_15m': lows['15m'],
                             'highs_5m': highs['5m'],
                             'lows_5m': lows['5m'],
-                            'distance_to_high': high_5m_distance,
-                            'distance_to_low': low_5m_distance,
+                            'distance_to_high_30m': high_30m_distance,
+                            'distance_to_low_30m': low_30m_distance,
+                            'distance_to_high_15m': high_15m_distance,
+                            'distance_to_low_15m': low_15m_distance,
+                            'distance_to_high_5m': high_5m_distance,
+                            'distance_to_low_5m': low_5m_distance,
                             'volume_weight': volume_weight,
                             'breaking_5m': breaking_5m,
+                            'breaking_15m': breaking_15m,
+                            'breaking_30m': breaking_30m,
                             'breaking_down_5m': breaking_down_5m,
+                            'breaking_down_15m': breaking_down_15m,
+                            'breaking_down_30m': breaking_down_30m,
                             'threshold': breakout_threshold * 100
                         }
                     )

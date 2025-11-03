@@ -370,10 +370,10 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # Check breakout conditions
-                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.002)  # 0.2%
-                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.5)
-                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 1.5)
+                # Check breakout conditions (AGGRESSIVE - lower thresholds to trade more)
+                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.0005)  # 0.05% (was 0.2%)
+                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.1)  # Lower threshold (was 0.5)
+                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.8)  # Lower threshold (was 1.5)
                 
                 # Tier-based breakout detection
                 breaking_30m = current_price > highs['30m'] * (1 + breakout_threshold)
@@ -414,31 +414,31 @@ class BotInstance:
                         }
                     )
                 
-                # Entry signals with tier-based confidence (LONG ONLY)
+                # Entry signals with tier-based confidence (LONG ONLY - AGGRESSIVE)
                 confidence = 0
                 reason = ""
                 
-                # Check LONG signals (breakouts above highs)
-                if breaking_30m and has_momentum and has_volume:
+                # Check LONG signals (breakouts above highs) - Relaxed conditions
+                if breaking_30m and has_volume:  # Removed momentum requirement
                     confidence = 0.9
-                    reason = f"Tier 1: Breaking 30m high (${highs['30m']:.2f}) with strong momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
-                elif breaking_15m and has_momentum and has_volume:
+                    reason = f"Tier 1: Breaking 30m high (${highs['30m']:.2f}) with volume ({volume_weight:.2f}x)"
+                elif breaking_15m and has_volume:  # Removed momentum requirement
                     confidence = 0.75
-                    reason = f"Tier 2: Breaking 15m high (${highs['15m']:.2f}) with good momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
-                elif breaking_5m and has_momentum:
+                    reason = f"Tier 2: Breaking 15m high (${highs['15m']:.2f}) with volume ({volume_weight:.2f}x)"
+                elif breaking_5m:  # Only needs to break 5m high
                     confidence = 0.6
-                    reason = f"Tier 3: Breaking 5m high (${highs['5m']:.2f}) with momentum ({momentum_score:.2f})"
+                    reason = f"Tier 3: Breaking 5m high (${highs['5m']:.2f})"
                 
-                # Check LONG signals (buying the dip - near lows with momentum reversal)
-                elif breaking_down_30m and has_momentum and has_volume:
+                # Check LONG signals (buying the dip - near lows) - Relaxed conditions
+                elif breaking_down_30m and has_volume:  # Removed momentum requirement
                     confidence = 0.85
-                    reason = f"BUY THE DIP: Near 30m low (${lows['30m']:.2f}) with reversal momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
-                elif breaking_down_15m and has_momentum and has_volume:
+                    reason = f"BUY THE DIP: Near 30m low (${lows['30m']:.2f}) with volume ({volume_weight:.2f}x)"
+                elif breaking_down_15m and has_volume:  # Removed momentum requirement
                     confidence = 0.7
-                    reason = f"BUY THE DIP: Near 15m low (${lows['15m']:.2f}) with reversal momentum ({momentum_score:.2f}) and volume ({volume_weight:.2f}x)"
-                elif breaking_down_5m and has_momentum:
+                    reason = f"BUY THE DIP: Near 15m low (${lows['15m']:.2f}) with volume ({volume_weight:.2f}x)"
+                elif breaking_down_5m:  # Only needs to be near 5m low
                     confidence = 0.55
-                    reason = f"BUY THE DIP: Near 5m low (${lows['5m']:.2f}) with reversal momentum ({momentum_score:.2f})"
+                    reason = f"BUY THE DIP: Near 5m low (${lows['5m']:.2f})"
                 
                 if confidence > 0:
                     await self.open_position(pair, 'long', current_price)
@@ -446,6 +446,8 @@ class BotInstance:
                         'confidence': confidence,
                         'tier': 1 if confidence >= 0.85 else (2 if confidence >= 0.7 else 3)
                     })
+                elif breaking_5m or breaking_down_5m:  # Close to signal but missing volume
+                    await self.log('info', f"⚠️ {pair} near signal - Breaking: {breaking_5m or breaking_down_5m} | Vol: {volume_weight:.2f}x (need {volume_threshold}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")

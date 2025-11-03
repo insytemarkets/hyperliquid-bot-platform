@@ -305,20 +305,22 @@ class BotInstance:
     
     async def run_multi_timeframe_breakout_strategy(self):
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""
-        if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
-            return
+        logger.info(f"🎯 Running Multi-Timeframe Breakout | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
-        logger.info(f"🎯 Running Multi-Timeframe Breakout for pairs: {self.strategy['pairs']}")
+        if len(self.positions) >= self.strategy['max_positions']:
+            await self.log('info', f"⚠️ Max positions reached ({len(self.positions)}/{self.strategy['max_positions']})", {})
+            return
         
         for pair in self.strategy['pairs']:
             # Skip if already have position
             if any(p['symbol'] == pair for p in self.positions):
+                await self.log('info', f"⏭️ Skipping {pair} - Already have open position", {})
                 continue
             
             try:
                 # Get current price
                 if pair not in self.last_prices:
+                    await self.log('info', f"⚠️ No price data for {pair}", {})
                     continue
                 current_price = self.last_prices[pair]
                 
@@ -370,10 +372,10 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # Check breakout conditions (AGGRESSIVE - lower thresholds to trade more)
-                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.0005)  # 0.05% (was 0.2%)
-                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.1)  # Lower threshold (was 0.5)
-                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.8)  # Lower threshold (was 1.5)
+                # Check breakout conditions (SUPER AGGRESSIVE - trade often)
+                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.0001)  # 0.01% - VERY low!
+                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.01)  # Almost any momentum
+                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.5)  # Very low volume req
                 
                 # Tier-based breakout detection
                 breaking_30m = current_price > highs['30m'] * (1 + breakout_threshold)
@@ -391,26 +393,24 @@ class BotInstance:
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_market_log_time >= self.market_log_interval:
+                    # Calculate how close we are to triggers
+                    high_5m_distance = ((current_price / highs['5m']) - 1) * 100
+                    low_5m_distance = ((lows['5m'] / current_price) - 1) * 100
+                    
                     await self.log(
                         'market_data',
-                        f"{pair} | Price: ${current_price:.2f} | 30m H/L: ${highs['30m']:.2f}/${lows['30m']:.2f} | 15m H/L: ${highs['15m']:.2f}/${lows['15m']:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f}",
+                        f"{pair} | Price: ${current_price:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f} | To High: {high_5m_distance:+.3f}% | To Low: {low_5m_distance:+.3f}% | Vol: {volume_weight:.2f}x",
                         {
                             'pair': pair,
                             'current_price': current_price,
                             'highs_5m': highs['5m'],
-                            'highs_15m': highs['15m'],
-                            'highs_30m': highs['30m'],
                             'lows_5m': lows['5m'],
-                            'lows_15m': lows['15m'],
-                            'lows_30m': lows['30m'],
-                            'momentum_score': momentum_score,
+                            'distance_to_high': high_5m_distance,
+                            'distance_to_low': low_5m_distance,
                             'volume_weight': volume_weight,
                             'breaking_5m': breaking_5m,
-                            'breaking_15m': breaking_15m,
-                            'breaking_30m': breaking_30m,
                             'breaking_down_5m': breaking_down_5m,
-                            'breaking_down_15m': breaking_down_15m,
-                            'breaking_down_30m': breaking_down_30m
+                            'threshold': breakout_threshold * 100
                         }
                     )
                 

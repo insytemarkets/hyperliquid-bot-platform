@@ -139,7 +139,8 @@ class BotInstance:
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
-        self.last_market_log_time: float = 0  # Track last market data log
+        self.last_snapshot_log_time: float = 0  # Track last snapshot log
+        self.last_analysis_log_time: float = 0  # Track last detailed analysis log (separate from snapshot)
         self.market_log_interval = 30  # Log market data every 30 seconds
         
     def update_config(self, bot_data: dict):
@@ -194,13 +195,13 @@ class BotInstance:
         
         # Log market snapshot (only every 30 seconds to avoid spam)
         current_time = datetime.now().timestamp()
-        if current_time - self.last_market_log_time >= self.market_log_interval:
+        if current_time - self.last_snapshot_log_time >= self.market_log_interval:
             await self.log(
                 'market_data',
                 f"📊 Market Snapshot: {len(self.last_prices)} pairs tracked",
                 {'prices': self.last_prices}
             )
-            self.last_market_log_time = current_time
+            self.last_snapshot_log_time = current_time
         
         # Load open positions
         result = supabase.table('bot_positions')\
@@ -278,7 +279,7 @@ class BotInstance:
                 
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
-                if current_time - self.last_market_log_time >= self.market_log_interval:
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     await self.log(
                         'market_data',
                         f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
@@ -291,6 +292,7 @@ class BotInstance:
                             'best_ask': float(asks[0][0])
                         }
                     )
+                    self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
@@ -392,7 +394,7 @@ class BotInstance:
                 
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
-                if current_time - self.last_market_log_time >= self.market_log_interval:
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     # Calculate how close we are to triggers for ALL timeframes
                     high_5m_distance = ((current_price / highs['5m']) - 1) * 100
                     low_5m_distance = ((lows['5m'] / current_price) - 1) * 100
@@ -429,6 +431,7 @@ class BotInstance:
                             'threshold': breakout_threshold * 100
                         }
                     )
+                    self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
                 # Entry signals with tier-based confidence (LONG ONLY - AGGRESSIVE)
                 confidence = 0
@@ -550,12 +553,13 @@ class BotInstance:
                 
                 # Log momentum (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
-                if current_time - self.last_market_log_time >= self.market_log_interval:
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     await self.log(
                         'market_data',
                         f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
                         {'pair': pair, 'momentum': momentum, 'price': current_price}
                     )
+                    self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if momentum > 2.0:

@@ -380,6 +380,7 @@ class BotInstance:
                 
                 # Simple volume weight (always valid since no API needed)
                 volume_weight = 1.0
+                momentum_score = 1.0  # Default momentum (no API needed)
                 
                 # Log how many prices we have in history
                 history_count = len(self.price_history.get(pair, []))

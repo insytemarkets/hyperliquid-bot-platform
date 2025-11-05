@@ -143,9 +143,43 @@ class BotInstance:
         self.last_analysis_log_time: float = 0  # Track last detailed analysis log (separate from snapshot)
         self.market_log_interval = 30  # Log market data every 30 seconds
         
+        # Price history tracking (NO API CALLS NEEDED!)
+        self.price_history: Dict[str, List[tuple[float, float]]] = {}  # pair -> [(timestamp, price), ...]
+        self.price_history_max = 1800  # Keep last 30 minutes of prices (1 per second)
+        
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
         self.strategy = bot_data['strategies']
+    
+    def track_price(self, pair: str, price: float):
+        """Track price history for calculating highs/lows (NO API CALLS!)"""
+        current_time = datetime.now().timestamp()
+        
+        if pair not in self.price_history:
+            self.price_history[pair] = []
+        
+        # Add new price
+        self.price_history[pair].append((current_time, price))
+        
+        # Keep only last 30 minutes
+        cutoff_time = current_time - 1800
+        self.price_history[pair] = [(t, p) for t, p in self.price_history[pair] if t > cutoff_time]
+    
+    def get_highs_lows_from_history(self, pair: str, minutes: int) -> tuple[float, float]:
+        """Get high/low from price history for the last N minutes"""
+        if pair not in self.price_history or len(self.price_history[pair]) == 0:
+            return (0, 0)
+        
+        current_time = datetime.now().timestamp()
+        cutoff_time = current_time - (minutes * 60)
+        
+        # Get prices from the last N minutes
+        recent_prices = [p for t, p in self.price_history[pair] if t > cutoff_time]
+        
+        if len(recent_prices) == 0:
+            return (0, 0)
+        
+        return (max(recent_prices), min(recent_prices))
     
     async def get_candles_cached(self, pair: str, interval: str, start_time: int, end_time: int):
         """Fetch candles with caching to avoid rate limits"""
@@ -188,10 +222,12 @@ class BotInstance:
             await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
             return
         
-        # Update last prices
+        # Update last prices AND track price history
         for pair in self.strategy['pairs']:
             if pair in all_mids:
-                self.last_prices[pair] = float(all_mids[pair])
+                price = float(all_mids[pair])
+                self.last_prices[pair] = price
+                self.track_price(pair, price)  # Track for high/low calculation
         
         # Log market snapshot (only every 30 seconds to avoid spam)
         current_time = datetime.now().timestamp()
@@ -326,53 +362,28 @@ class BotInstance:
                     continue
                 current_price = self.last_prices[pair]
                 
-                # Get timeframe highs and lows (5m, 15m, 30m)
-                timeframes = ['5m', '15m', '30m']
-                highs = {}
-                lows = {}
-                volumes = {}
+                # Get timeframe highs and lows from price history (NO API CALLS!)
+                high_30m, low_30m = self.get_highs_lows_from_history(pair, 30)
+                high_15m, low_15m = self.get_highs_lows_from_history(pair, 15)
+                high_5m, low_5m = self.get_highs_lows_from_history(pair, 5)
                 
-                for tf in timeframes:
-                    try:
-                        # Get candles for timeframe
-                        end_time = int(datetime.now().timestamp() * 1000)
-                        if tf == '5m':
-                            start_time = end_time - (5 * 60 * 1000)
-                            interval = '1m'
-                        elif tf == '15m':
-                            start_time = end_time - (15 * 60 * 1000)
-                            interval = '1m'
-                        else:  # 30m
-                            start_time = end_time - (30 * 60 * 1000)
-                            interval = '1m'
-                        
-                        candles = await self.get_candles_cached(pair, interval, start_time, end_time)
-                        
-                        if candles and len(candles) > 0:
-                            # Calculate high, low and average volume for timeframe
-                            tf_high = max(float(c['h']) for c in candles)
-                            tf_low = min(float(c['l']) for c in candles)
-                            tf_volume = sum(float(c['v']) for c in candles) / len(candles)
-                            
-                            highs[tf] = tf_high
-                            lows[tf] = tf_low
-                            volumes[tf] = tf_volume
-                        else:
-                            highs[tf] = current_price
-                            lows[tf] = current_price
-                            volumes[tf] = 0
-                            
-                    except Exception as e:
-                        logger.warning(f"Failed to get {tf} data for {pair}: {e}")
-                        highs[tf] = current_price
-                        lows[tf] = current_price
-                        volumes[tf] = 0
+                # If no history yet, use current price as baseline
+                if high_5m == 0:
+                    high_5m = low_5m = current_price
+                if high_15m == 0:
+                    high_15m = low_15m = current_price
+                if high_30m == 0:
+                    high_30m = low_30m = current_price
                 
-                # Calculate momentum score
-                momentum_score = await self.calculate_momentum_score(pair, current_price)
+                highs = {'5m': high_5m, '15m': high_15m, '30m': high_30m}
+                lows = {'5m': low_5m, '15m': low_15m, '30m': low_30m}
                 
-                # Calculate volume weight
-                volume_weight = await self.calculate_volume_weight(pair, volumes)
+                # Simple volume weight (always valid since no API needed)
+                volume_weight = 1.0
+                
+                # Log how many prices we have in history
+                history_count = len(self.price_history.get(pair, []))
+                logger.debug(f"Price history for {pair}: {history_count} ticks stored")
                 
                 # Check breakout conditions (SUPER AGGRESSIVE - trade often)
                 breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.0001)  # 0.01% - VERY low!

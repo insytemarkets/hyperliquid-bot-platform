@@ -378,23 +378,23 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # Check breakout conditions (REALISTIC thresholds that will actually trigger!)
-                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.001)  # 0.1% (was 0.01% - too tight!)
-                min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.01)  # Almost any momentum
-                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.3)  # Very low (was 0.5)
+                # ULTRA SIMPLE - Trade if price is in top or bottom 20% of any range
+                range_5m = highs['5m'] - lows['5m']
+                range_15m = highs['15m'] - lows['15m']
+                range_30m = highs['30m'] - lows['30m']
                 
-                # Tier-based breakout detection
-                breaking_30m = current_price > highs['30m'] * (1 + breakout_threshold)
-                breaking_15m = current_price > highs['15m'] * (1 + breakout_threshold)
-                breaking_5m = current_price > highs['5m'] * (1 + breakout_threshold)
+                # Is price in top 20% of range? (potential breakout)
+                in_top_5m = current_price > (lows['5m'] + range_5m * 0.8)
+                in_top_15m = current_price > (lows['15m'] + range_15m * 0.8)
+                in_top_30m = current_price > (lows['30m'] + range_30m * 0.8)
                 
-                # Tier-based breakdown detection (for shorts)
-                breaking_down_30m = current_price < lows['30m'] * (1 - breakout_threshold)
-                breaking_down_15m = current_price < lows['15m'] * (1 - breakout_threshold)
-                breaking_down_5m = current_price < lows['5m'] * (1 - breakout_threshold)
+                # Is price in bottom 20% of range? (potential dip buy)
+                in_bottom_5m = current_price < (lows['5m'] + range_5m * 0.2)
+                in_bottom_15m = current_price < (lows['15m'] + range_15m * 0.2)
+                in_bottom_30m = current_price < (lows['30m'] + range_30m * 0.2)
                 
-                has_momentum = momentum_score > min_momentum
-                has_volume = volume_weight > volume_threshold
+                # Log what we're checking
+                logger.info(f"{pair} | Price: ${current_price:.2f} | 5m range: ${range_5m:.2f} | In top 20%: {in_top_5m} | In bottom 20%: {in_bottom_5m}")
                 
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
@@ -426,51 +426,50 @@ class BotInstance:
                             'distance_to_high_5m': high_5m_distance,
                             'distance_to_low_5m': low_5m_distance,
                             'volume_weight': volume_weight,
-                            'breaking_5m': breaking_5m,
-                            'breaking_15m': breaking_15m,
-                            'breaking_30m': breaking_30m,
-                            'breaking_down_5m': breaking_down_5m,
-                            'breaking_down_15m': breaking_down_15m,
-                            'breaking_down_30m': breaking_down_30m,
-                            'threshold': breakout_threshold * 100
+                            'in_top_5m': in_top_5m,
+                            'in_top_15m': in_top_15m,
+                            'in_top_30m': in_top_30m,
+                            'in_bottom_5m': in_bottom_5m,
+                            'in_bottom_15m': in_bottom_15m,
+                            'in_bottom_30m': in_bottom_30m
                         }
                     )
                     self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
-                # Entry signals with tier-based confidence (LONG ONLY - AGGRESSIVE)
+                # DEAD SIMPLE ENTRY - Trade if in top or bottom 20% of ANY range
                 confidence = 0
                 reason = ""
                 
-                # Check LONG signals (breakouts above highs) - Relaxed conditions
-                if breaking_30m and has_volume:  # Removed momentum requirement
+                # Top of range entries (momentum up)
+                if in_top_30m:
                     confidence = 0.9
-                    reason = f"Tier 1: Breaking 30m high (${highs['30m']:.2f}) with volume ({volume_weight:.2f}x)"
-                elif breaking_15m and has_volume:  # Removed momentum requirement
+                    reason = f"In top 20% of 30m range (${lows['30m']:.2f}-${highs['30m']:.2f})"
+                elif in_top_15m:
                     confidence = 0.75
-                    reason = f"Tier 2: Breaking 15m high (${highs['15m']:.2f}) with volume ({volume_weight:.2f}x)"
-                elif breaking_5m:  # Only needs to break 5m high
+                    reason = f"In top 20% of 15m range (${lows['15m']:.2f}-${highs['15m']:.2f})"
+                elif in_top_5m:
                     confidence = 0.6
-                    reason = f"Tier 3: Breaking 5m high (${highs['5m']:.2f})"
+                    reason = f"In top 20% of 5m range (${lows['5m']:.2f}-${highs['5m']:.2f})"
                 
-                # Check LONG signals (buying the dip - near lows) - Relaxed conditions
-                elif breaking_down_30m and has_volume:  # Removed momentum requirement
+                # Bottom of range entries (buy the dip)
+                elif in_bottom_30m:
                     confidence = 0.85
-                    reason = f"BUY THE DIP: Near 30m low (${lows['30m']:.2f}) with volume ({volume_weight:.2f}x)"
-                elif breaking_down_15m and has_volume:  # Removed momentum requirement
+                    reason = f"BUY DIP: In bottom 20% of 30m range (${lows['30m']:.2f}-${highs['30m']:.2f})"
+                elif in_bottom_15m:
                     confidence = 0.7
-                    reason = f"BUY THE DIP: Near 15m low (${lows['15m']:.2f}) with volume ({volume_weight:.2f}x)"
-                elif breaking_down_5m:  # Only needs to be near 5m low
+                    reason = f"BUY DIP: In bottom 20% of 15m range (${lows['15m']:.2f}-${highs['15m']:.2f})"
+                elif in_bottom_5m:
                     confidence = 0.55
-                    reason = f"BUY THE DIP: Near 5m low (${lows['5m']:.2f})"
+                    reason = f"BUY DIP: In bottom 20% of 5m range (${lows['5m']:.2f}-${highs['5m']:.2f})"
                 
                 if confidence > 0:
                     await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🟢 LONG signal: {pair} - {reason}", {
+                    await self.log('signal', f"🟢 LONG: {pair} @ ${current_price:.2f} - {reason}", {
                         'confidence': confidence,
-                        'tier': 1 if confidence >= 0.85 else (2 if confidence >= 0.7 else 3)
+                        'range_5m': range_5m,
+                        'range_15m': range_15m,
+                        'range_30m': range_30m
                     })
-                elif breaking_5m or breaking_down_5m:  # Close to signal but missing volume
-                    await self.log('info', f"⚠️ {pair} near signal - Breaking: {breaking_5m or breaking_down_5m} | Vol: {volume_weight:.2f}x (need {volume_threshold}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")

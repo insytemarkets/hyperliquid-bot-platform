@@ -378,23 +378,24 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # ULTRA SIMPLE - Trade if price is in top or bottom 20% of any range
-                range_5m = highs['5m'] - lows['5m']
-                range_15m = highs['15m'] - lows['15m']
-                range_30m = highs['30m'] - lows['30m']
+                # DEAD SIMPLE - Is price touching the high or low?
+                # Allow 0.5% wiggle room to count as "touching"
+                wiggle = 0.005  # 0.5%
                 
-                # Is price in top 20% of range? (potential breakout)
-                in_top_5m = current_price > (lows['5m'] + range_5m * 0.8)
-                in_top_15m = current_price > (lows['15m'] + range_15m * 0.8)
-                in_top_30m = current_price > (lows['30m'] + range_30m * 0.8)
+                # Near highs? (price within 0.5% of high)
+                near_high_30m = current_price >= highs['30m'] * (1 - wiggle)
+                near_high_15m = current_price >= highs['15m'] * (1 - wiggle)
+                near_high_5m = current_price >= highs['5m'] * (1 - wiggle)
                 
-                # Is price in bottom 20% of range? (potential dip buy)
-                in_bottom_5m = current_price < (lows['5m'] + range_5m * 0.2)
-                in_bottom_15m = current_price < (lows['15m'] + range_15m * 0.2)
-                in_bottom_30m = current_price < (lows['30m'] + range_30m * 0.2)
+                # Near lows? (price within 0.5% of low)
+                near_low_30m = current_price <= lows['30m'] * (1 + wiggle)
+                near_low_15m = current_price <= lows['15m'] * (1 + wiggle)
+                near_low_5m = current_price <= lows['5m'] * (1 + wiggle)
                 
-                # Log what we're checking
-                logger.info(f"{pair} | Price: ${current_price:.2f} | 5m range: ${range_5m:.2f} | In top 20%: {in_top_5m} | In bottom 20%: {in_bottom_5m}")
+                # Has volume?
+                has_volume = volume_weight > 0.5
+                
+                logger.info(f"{pair} | ${current_price:.2f} | Near 5m H/L: {near_high_5m}/{near_low_5m} | Vol: {has_volume}")
                 
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
@@ -426,50 +427,41 @@ class BotInstance:
                             'distance_to_high_5m': high_5m_distance,
                             'distance_to_low_5m': low_5m_distance,
                             'volume_weight': volume_weight,
-                            'in_top_5m': in_top_5m,
-                            'in_top_15m': in_top_15m,
-                            'in_top_30m': in_top_30m,
-                            'in_bottom_5m': in_bottom_5m,
-                            'in_bottom_15m': in_bottom_15m,
-                            'in_bottom_30m': in_bottom_30m
+                            'has_volume': has_volume,
+                            'near_high_5m': near_high_5m,
+                            'near_high_15m': near_high_15m,
+                            'near_high_30m': near_high_30m,
+                            'near_low_5m': near_low_5m,
+                            'near_low_15m': near_low_15m,
+                            'near_low_30m': near_low_30m
                         }
                     )
                     self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
-                # DEAD SIMPLE ENTRY - Trade if in top or bottom 20% of ANY range
-                confidence = 0
+                # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
                 
-                # Top of range entries (momentum up)
-                if in_top_30m:
-                    confidence = 0.9
-                    reason = f"In top 20% of 30m range (${lows['30m']:.2f}-${highs['30m']:.2f})"
-                elif in_top_15m:
-                    confidence = 0.75
-                    reason = f"In top 20% of 15m range (${lows['15m']:.2f}-${highs['15m']:.2f})"
-                elif in_top_5m:
-                    confidence = 0.6
-                    reason = f"In top 20% of 5m range (${lows['5m']:.2f}-${highs['5m']:.2f})"
+                # Near 30m high with volume
+                if near_high_30m and has_volume:
+                    reason = f"Near 30m high ${highs['30m']:.2f} with volume"
+                # Near 30m low with volume
+                elif near_low_30m and has_volume:
+                    reason = f"Buy dip at 30m low ${lows['30m']:.2f} with volume"
+                # Near 15m high with volume
+                elif near_high_15m and has_volume:
+                    reason = f"Near 15m high ${highs['15m']:.2f} with volume"
+                # Near 15m low with volume
+                elif near_low_15m and has_volume:
+                    reason = f"Buy dip at 15m low ${lows['15m']:.2f} with volume"
+                # Near 5m high OR low (no volume needed for 5m)
+                elif near_high_5m:
+                    reason = f"Near 5m high ${highs['5m']:.2f}"
+                elif near_low_5m:
+                    reason = f"Buy dip at 5m low ${lows['5m']:.2f}"
                 
-                # Bottom of range entries (buy the dip)
-                elif in_bottom_30m:
-                    confidence = 0.85
-                    reason = f"BUY DIP: In bottom 20% of 30m range (${lows['30m']:.2f}-${highs['30m']:.2f})"
-                elif in_bottom_15m:
-                    confidence = 0.7
-                    reason = f"BUY DIP: In bottom 20% of 15m range (${lows['15m']:.2f}-${highs['15m']:.2f})"
-                elif in_bottom_5m:
-                    confidence = 0.55
-                    reason = f"BUY DIP: In bottom 20% of 5m range (${lows['5m']:.2f}-${highs['5m']:.2f})"
-                
-                if confidence > 0:
+                if reason:
                     await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🟢 LONG: {pair} @ ${current_price:.2f} - {reason}", {
-                        'confidence': confidence,
-                        'range_5m': range_5m,
-                        'range_15m': range_15m,
-                        'range_30m': range_30m
-                    })
+                    await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
                     
             except Exception as e:
                 logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")

@@ -378,10 +378,10 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # Check breakout conditions (SUPER AGGRESSIVE - trade often)
-                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.0001)  # 0.01% - VERY low!
+                # Check breakout conditions (REALISTIC thresholds that will actually trigger!)
+                breakout_threshold = self.strategy.get('parameters', {}).get('breakoutThreshold', 0.001)  # 0.1% (was 0.01% - too tight!)
                 min_momentum = self.strategy.get('parameters', {}).get('minMomentumScore', 0.01)  # Almost any momentum
-                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.5)  # Very low volume req
+                volume_threshold = self.strategy.get('parameters', {}).get('volumeThreshold', 0.3)  # Very low (was 0.5)
                 
                 # Tier-based breakout detection
                 breaking_30m = current_price > highs['30m'] * (1 + breakout_threshold)

@@ -736,6 +736,20 @@ class BotInstance:
             
             logger.info(f"✅ Trade inserted successfully")
             
+            # CRITICAL: Update self.positions immediately so next tick doesn't open duplicate
+            self.positions.append({
+                'id': position_id,
+                'symbol': pair,
+                'side': side,
+                'size': position_size,
+                'entry_price': price,
+                'current_price': price,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'status': 'open'
+            })
+            logger.info(f"✅ Updated positions list: {len(self.positions)} positions")
+            
             await self.log(
                 'trade',
                 f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",

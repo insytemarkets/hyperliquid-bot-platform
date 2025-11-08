@@ -111,21 +111,79 @@ export async function getBots() {
 
     console.log('✅ Retrieved', bots?.length || 0, 'bots from Supabase');
     
-    // Transform to match expected format
-    return (bots || []).map(bot => ({
-      ...bot,
-      positions: [],
-      performance: {
-        totalTrades: 0,
-        winningTrades: 0,
-        losingTrades: 0,
-        winRate: 0,
-        totalPnl: 0,
-        todayPnl: 0,
-        unrealizedPnl: 0,
-        realizedPnl: 0,
-      }
+    // Fetch positions and trades for each bot to calculate real stats
+    const botsWithStats = await Promise.all((bots || []).map(async (bot) => {
+      // Fetch open positions
+      const { data: positions } = await supabase
+        .from('bot_positions')
+        .select('*')
+        .eq('bot_id', bot.id)
+        .eq('status', 'open');
+      
+      // Fetch all trades
+      const { data: trades } = await supabase
+        .from('bot_trades')
+        .select('*')
+        .eq('bot_id', bot.id)
+        .order('executed_at', { ascending: false });
+      
+      // Calculate performance stats
+      const totalTrades = trades?.length || 0;
+      const openPositions = positions || [];
+      
+      // Calculate P&L from closed positions (positions with status='closed')
+      const { data: closedPositions } = await supabase
+        .from('bot_positions')
+        .select('*')
+        .eq('bot_id', bot.id)
+        .eq('status', 'closed');
+      
+      // Calculate realized P&L from closed positions
+      const realizedPnl = closedPositions?.reduce((sum, pos) => {
+        const pnl = pos.unrealized_pnl || 0;
+        return sum + pnl;
+      }, 0) || 0;
+      
+      // Calculate unrealized P&L from open positions
+      const unrealizedPnl = openPositions.reduce((sum, pos) => {
+        const pnl = pos.unrealized_pnl || 0;
+        return sum + pnl;
+      }, 0);
+      
+      // Calculate today's P&L (positions opened today)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayPnl = (openPositions.concat(closedPositions || []))
+        .filter(pos => {
+          const openedAt = new Date(pos.opened_at);
+          return openedAt >= today;
+        })
+        .reduce((sum, pos) => sum + (pos.unrealized_pnl || 0), 0);
+      
+      // Calculate win rate from closed positions
+      const winningTrades = closedPositions?.filter(pos => (pos.unrealized_pnl || 0) > 0).length || 0;
+      const losingTrades = closedPositions?.filter(pos => (pos.unrealized_pnl || 0) < 0).length || 0;
+      const winRate = closedPositions && closedPositions.length > 0
+        ? (winningTrades / closedPositions.length) * 100
+        : 0;
+      
+      return {
+        ...bot,
+        positions: openPositions,
+        performance: {
+          totalTrades,
+          winningTrades,
+          losingTrades,
+          winRate,
+          totalPnl: realizedPnl + unrealizedPnl,
+          todayPnl,
+          unrealizedPnl,
+          realizedPnl,
+        }
+      };
     }));
+    
+    return botsWithStats;
   } catch (error) {
     console.error('❌ Failed to fetch bots from Supabase:', error);
     throw error;

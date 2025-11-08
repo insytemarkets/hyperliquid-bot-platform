@@ -480,7 +480,8 @@ class BotInstance:
                     logger.info(f"⏭️ {pair} No trade signal - Conditions not met")
                     
             except Exception as e:
-                logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")
+                logger.error(f"❌ Error in multi-timeframe analysis for {pair}: {e}", exc_info=True)
+                await self.log('error', f"❌ Error analyzing {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
     
     async def calculate_momentum_score(self, pair: str, current_price: float) -> float:
         """Calculate momentum score for multi-timeframe strategy"""
@@ -619,15 +620,45 @@ class BotInstance:
             }
             
             logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f}")
-            result = supabase.table('bot_positions').insert(position_data).execute()
-            
-            if not result.data or len(result.data) == 0:
-                logger.error(f"❌ Position insert returned no data for {pair}")
-                await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {})
+            try:
+                result = supabase.table('bot_positions').insert(position_data).execute()
+                logger.debug(f"Supabase insert result type: {type(result)}, has data: {hasattr(result, 'data')}, has error: {hasattr(result, 'error')}")
+            except Exception as e:
+                logger.error(f"❌ Exception inserting position: {e}", exc_info=True)
+                await self.log('error', f"❌ Exception inserting position for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
                 return False
             
-            position_id = result.data[0]['id']
-            logger.info(f"✅ Position inserted: {position_id}")
+            # Check for Supabase errors - handle different error formats
+            if hasattr(result, 'error') and result.error:
+                error_msg = str(result.error) if result.error else "Unknown error"
+                logger.error(f"❌ Supabase error inserting position: {error_msg} | Full result: {result}")
+                await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg, 'full_result': str(result)})
+                return False
+            
+            # Check if result is actually an error dict
+            if isinstance(result, dict) and 'message' in result:
+                error_msg = result.get('message', 'Unknown error')
+                logger.error(f"❌ Supabase returned error dict: {error_msg} | Full result: {result}")
+                await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg, 'full_result': str(result)})
+                return False
+            
+            if not hasattr(result, 'data') or not result.data or len(result.data) == 0:
+                error_msg = f"No data returned from insert. Result type: {type(result)}, Result: {result}, Dir: {dir(result)}"
+                logger.error(f"❌ Position insert returned no data for {pair}: {error_msg}")
+                await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {'result': str(result), 'result_type': str(type(result))})
+                return False
+            
+            try:
+                position_id = result.data[0].get('id') if isinstance(result.data[0], dict) else result.data[0]['id']
+                if not position_id:
+                    logger.error(f"❌ Position insert returned data but no ID: {result.data}")
+                    await self.log('error', f"❌ Failed to get position ID for {pair}", {'result_data': str(result.data)})
+                    return False
+                logger.info(f"✅ Position inserted: {position_id}")
+            except (KeyError, IndexError, TypeError) as e:
+                logger.error(f"❌ Error accessing position ID: {e} | Result data: {result.data}", exc_info=True)
+                await self.log('error', f"❌ Failed to access position ID for {pair}: {str(e)}", {'error': str(e), 'result_data': str(result.data)})
+                return False
             
             # Insert trade
             trade_data = {
@@ -642,11 +673,24 @@ class BotInstance:
             }
             
             logger.info(f"📝 Inserting trade for {pair} {side} @ ${price:.2f}")
-            trade_result = supabase.table('bot_trades').insert(trade_data).execute()
+            try:
+                trade_result = supabase.table('bot_trades').insert(trade_data).execute()
+            except Exception as e:
+                logger.error(f"❌ Exception inserting trade: {e}", exc_info=True)
+                await self.log('error', f"❌ Exception inserting trade for {pair}: {str(e)}", {'error': str(e)})
+                return False
             
-            if not trade_result.data or len(trade_result.data) == 0:
-                logger.error(f"❌ Trade insert returned no data for {pair}")
-                await self.log('error', f"❌ Failed to insert trade for {pair} - No data returned", {})
+            # Check for Supabase errors
+            if hasattr(trade_result, 'error') and trade_result.error:
+                error_msg = str(trade_result.error) if trade_result.error else "Unknown error"
+                logger.error(f"❌ Supabase error inserting trade: {error_msg}")
+                await self.log('error', f"❌ Failed to insert trade for {pair}: {error_msg}", {'error': error_msg})
+                return False
+            
+            if not hasattr(trade_result, 'data') or not trade_result.data or len(trade_result.data) == 0:
+                error_msg = f"No data returned from trade insert. Result type: {type(trade_result)}, Result: {trade_result}"
+                logger.error(f"❌ Trade insert returned no data for {pair}: {error_msg}")
+                await self.log('error', f"❌ Failed to insert trade for {pair} - No data returned", {'result': str(trade_result)})
                 return False
             
             logger.info(f"✅ Trade inserted successfully")

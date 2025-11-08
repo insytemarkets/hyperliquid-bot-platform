@@ -801,53 +801,97 @@ class BotInstance:
             should_close = False
             reason = ''
             
+            # Get stop_loss and take_profit, handle None values
+            stop_loss = position.get('stop_loss')
+            take_profit = position.get('take_profit')
+            
+            # Log current status for debugging
             if side == 'long':
-                if current_price <= position['stop_loss']:
+                distance_to_tp = ((take_profit - current_price) / current_price * 100) if take_profit else None
+                distance_to_sl = ((current_price - stop_loss) / current_price * 100) if stop_loss else None
+                logger.debug(f"🔍 {pair} LONG | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                
+                if stop_loss and current_price <= stop_loss:
                     should_close = True
                     reason = 'Stop Loss'
-                elif current_price >= position['take_profit']:
+                elif take_profit and current_price >= take_profit:
                     should_close = True
                     reason = 'Take Profit'
-            else:
-                if current_price >= position['stop_loss']:
+            else:  # short
+                distance_to_tp = ((current_price - take_profit) / current_price * 100) if take_profit else None
+                distance_to_sl = ((stop_loss - current_price) / current_price * 100) if stop_loss else None
+                logger.debug(f"🔍 {pair} SHORT | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                
+                if stop_loss and current_price >= stop_loss:
                     should_close = True
                     reason = 'Stop Loss'
-                elif current_price <= position['take_profit']:
+                elif take_profit and current_price <= take_profit:
                     should_close = True
                     reason = 'Take Profit'
             
             if should_close:
+                logger.info(f"🎯 CLOSING {pair} {side.upper()} @ ${current_price:.2f} - {reason} | Entry: ${entry_price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)")
                 await self.close_position(position, current_price, reason)
+            elif not stop_loss or not take_profit:
+                logger.warning(f"⚠️ {pair} position missing SL/TP: SL={stop_loss}, TP={take_profit}")
     
     async def close_position(self, position: dict, close_price: float, reason: str):
         """Close a position"""
-        side = position['side']
-        pnl = (close_price - position['entry_price']) * position['size'] if side == 'long' else (position['entry_price'] - close_price) * position['size']
-        
-        # Update position
-        supabase.table('bot_positions')\
-            .update({'status': 'closed', 'current_price': close_price, 'closed_at': datetime.now().isoformat()})\
-            .eq('id', position['id'])\
-            .execute()
-        
-        # Insert closing trade
-        supabase.table('bot_trades').insert({
-            'bot_id': self.bot_id,
-            'position_id': position['id'],
-            'symbol': position['symbol'],
-            'side': 'sell' if side == 'long' else 'buy',
-            'size': position['size'],
-            'price': close_price,
-            'pnl': pnl,
-            'executed_at': datetime.now().isoformat(),
-            'mode': self.mode
-        }).execute()
-        
-        await self.log(
-            'trade',
-            f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | P&L: ${pnl:.2f}",
-            {'position_id': position['id'], 'pnl': pnl, 'reason': reason}
-        )
+        try:
+            side = position['side']
+            pnl = (close_price - position['entry_price']) * position['size'] if side == 'long' else (position['entry_price'] - close_price) * position['size']
+            pnl_pct = (pnl / (position['entry_price'] * position['size'])) * 100
+            
+            logger.info(f"📝 Closing position {position['id']} for {position['symbol']} @ ${close_price:.2f} ({reason})")
+            
+            # Update position in database
+            try:
+                supabase.table('bot_positions')\
+                    .update({
+                        'status': 'closed', 
+                        'current_price': close_price, 
+                        'closed_at': datetime.now().isoformat(),
+                        'unrealized_pnl': pnl
+                    })\
+                    .eq('id', position['id'])\
+                    .execute()
+                logger.info(f"✅ Position updated in database")
+            except Exception as e:
+                logger.error(f"❌ Failed to update position: {e}", exc_info=True)
+                return
+            
+            # Insert closing trade
+            trade_id = str(uuid.uuid4())
+            try:
+                supabase.table('bot_trades').insert({
+                    'id': trade_id,
+                    'bot_id': self.bot_id,
+                    'position_id': position['id'],
+                    'symbol': position['symbol'],
+                    'side': 'sell' if side == 'long' else 'buy',
+                    'size': position['size'],
+                    'price': close_price,
+                    'pnl': pnl,
+                    'executed_at': datetime.now().isoformat(),
+                    'mode': self.mode
+                }).execute()
+                logger.info(f"✅ Closing trade inserted: {trade_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to insert closing trade: {e}", exc_info=True)
+                return
+            
+            # CRITICAL: Remove from self.positions so we don't keep checking it
+            self.positions = [p for p in self.positions if p['id'] != position['id']]
+            logger.info(f"✅ Removed position from list. Remaining: {len(self.positions)}")
+            
+            await self.log(
+                'trade',
+                f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | Entry: ${position['entry_price']:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
+                {'position_id': position['id'], 'pnl': pnl, 'pnl_pct': pnl_pct, 'reason': reason}
+            )
+        except Exception as e:
+            logger.error(f"❌ CRITICAL ERROR closing position: {e}", exc_info=True)
+            await self.log('error', f"❌ Failed to close position: {str(e)}", {'error': str(e)})
     
     async def log(self, log_type: str, message: str, data: dict):
         """Log activity"""

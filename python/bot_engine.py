@@ -296,11 +296,13 @@ class BotInstance:
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
-                    await self.open_position(pair, 'long', float(asks[0][0]))
-                    await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                    success = await self.open_position(pair, 'long', float(asks[0][0]))
+                    if success:
+                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
-                    await self.open_position(pair, 'short', float(bids[0][0]))
-                    await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                    success = await self.open_position(pair, 'short', float(bids[0][0]))
+                    if success:
+                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
@@ -382,20 +384,21 @@ class BotInstance:
                 # Allow 0.5% wiggle room to count as "touching"
                 wiggle = 0.005  # 0.5%
                 
-                # Near highs? (price within 0.5% of high)
-                near_high_30m = current_price >= highs['30m'] * (1 - wiggle)
-                near_high_15m = current_price >= highs['15m'] * (1 - wiggle)
-                near_high_5m = current_price >= highs['5m'] * (1 - wiggle)
+                # Near highs? (price within 0.5% of high - FIXED: use absolute distance)
+                near_high_30m = abs(current_price - highs['30m']) / highs['30m'] <= wiggle if highs['30m'] > 0 else False
+                near_high_15m = abs(current_price - highs['15m']) / highs['15m'] <= wiggle if highs['15m'] > 0 else False
+                near_high_5m = abs(current_price - highs['5m']) / highs['5m'] <= wiggle if highs['5m'] > 0 else False
                 
-                # Near lows? (price within 0.5% of low)
-                near_low_30m = current_price <= lows['30m'] * (1 + wiggle)
-                near_low_15m = current_price <= lows['15m'] * (1 + wiggle)
-                near_low_5m = current_price <= lows['5m'] * (1 + wiggle)
+                # Near lows? (price within 0.5% of low - FIXED: use absolute distance)
+                near_low_30m = abs(current_price - lows['30m']) / lows['30m'] <= wiggle if lows['30m'] > 0 else False
+                near_low_15m = abs(current_price - lows['15m']) / lows['15m'] <= wiggle if lows['15m'] > 0 else False
+                near_low_5m = abs(current_price - lows['5m']) / lows['5m'] <= wiggle if lows['5m'] > 0 else False
                 
                 # Has volume?
                 has_volume = volume_weight > 0.5
                 
-                logger.info(f"{pair} | ${current_price:.2f} | Near 5m H/L: {near_high_5m}/{near_low_5m} | Vol: {has_volume}")
+                # DEBUG: Log all condition checks
+                logger.info(f"{pair} | ${current_price:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f} | Near 5m H/L: {near_high_5m}/{near_low_5m} | Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
                 # Log detailed analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
@@ -441,6 +444,13 @@ class BotInstance:
                 # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
                 
+                # DEBUG: Log all condition checks before trade decision
+                logger.info(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
+                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} | "
+                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} | "
+                          f"Near 5m H/L: {near_high_5m}/{near_low_5m} | "
+                          f"Volume: {volume_weight:.2f}x | HasVol: {has_volume}")
+                
                 # Near 30m high with volume
                 if near_high_30m and has_volume:
                     reason = f"Near 30m high ${highs['30m']:.2f} with volume"
@@ -460,8 +470,14 @@ class BotInstance:
                     reason = f"Buy dip at 5m low ${lows['5m']:.2f}"
                 
                 if reason:
-                    await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
+                    logger.info(f"✅ {pair} TRADE SIGNAL TRIGGERED: {reason}")
+                    success = await self.open_position(pair, 'long', current_price)
+                    if success:
+                        await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
+                    else:
+                        await self.log('error', f"❌ Failed to open position for {pair}: {reason}", {})
+                else:
+                    logger.info(f"⏭️ {pair} No trade signal - Conditions not met")
                     
             except Exception as e:
                 logger.error(f"Error in multi-timeframe analysis for {pair}: {e}")
@@ -558,11 +574,13 @@ class BotInstance:
                 
                 # Entry signals
                 if momentum > 2.0:
-                    await self.open_position(pair, 'long', current_price)
-                    await self.log('signal', f"🚀 LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
+                    success = await self.open_position(pair, 'long', current_price)
+                    if success:
+                        await self.log('signal', f"🚀 LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
                 elif momentum < -2.0:
-                    await self.open_position(pair, 'short', current_price)
-                    await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
+                    success = await self.open_position(pair, 'short', current_price)
+                    if success:
+                        await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing momentum for {pair}: {e}")
@@ -571,54 +589,80 @@ class BotInstance:
         """Default strategy (for testing)"""
         await self.log('info', f"🤖 Running default strategy for {len(self.strategy['pairs'])} pairs", {})
     
-    async def open_position(self, pair: str, side: str, price: float):
-        """Open a new position"""
-        position_size = self.strategy['position_size']
-        stop_loss_pct = self.strategy['stop_loss_percent']
-        take_profit_pct = self.strategy['take_profit_percent']
-        
-        # Calculate SL/TP
-        if side == 'long':
-            stop_loss = price * (1 - stop_loss_pct / 100)
-            take_profit = price * (1 + take_profit_pct / 100)
-        else:
-            stop_loss = price * (1 + stop_loss_pct / 100)
-            take_profit = price * (1 - take_profit_pct / 100)
-        
-        # Insert position
-        position_data = {
-            'bot_id': self.bot_id,
-            'symbol': pair,
-            'side': side,
-            'size': position_size,
-            'entry_price': price,
-            'current_price': price,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'opened_at': datetime.now().isoformat(),
-            'status': 'open'
-        }
-        
-        result = supabase.table('bot_positions').insert(position_data).execute()
-        position_id = result.data[0]['id']
-        
-        # Insert trade
-        supabase.table('bot_trades').insert({
-            'bot_id': self.bot_id,
-            'position_id': position_id,
-            'symbol': pair,
-            'side': 'buy' if side == 'long' else 'sell',
-            'size': position_size,
-            'price': price,
-            'executed_at': datetime.now().isoformat(),
-            'mode': self.mode
-        }).execute()
-        
-        await self.log(
-            'trade',
-            f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
-            {'position_id': position_id, 'side': side, 'price': price}
-        )
+    async def open_position(self, pair: str, side: str, price: float) -> bool:
+        """Open a new position - returns True if successful, False otherwise"""
+        try:
+            position_size = self.strategy['position_size']
+            stop_loss_pct = self.strategy['stop_loss_percent']
+            take_profit_pct = self.strategy['take_profit_percent']
+            
+            # Calculate SL/TP
+            if side == 'long':
+                stop_loss = price * (1 - stop_loss_pct / 100)
+                take_profit = price * (1 + take_profit_pct / 100)
+            else:
+                stop_loss = price * (1 + stop_loss_pct / 100)
+                take_profit = price * (1 - take_profit_pct / 100)
+            
+            # Insert position
+            position_data = {
+                'bot_id': self.bot_id,
+                'symbol': pair,
+                'side': side,
+                'size': position_size,
+                'entry_price': price,
+                'current_price': price,
+                'stop_loss': stop_loss,
+                'take_profit': take_profit,
+                'opened_at': datetime.now().isoformat(),
+                'status': 'open'
+            }
+            
+            logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f}")
+            result = supabase.table('bot_positions').insert(position_data).execute()
+            
+            if not result.data or len(result.data) == 0:
+                logger.error(f"❌ Position insert returned no data for {pair}")
+                await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {})
+                return False
+            
+            position_id = result.data[0]['id']
+            logger.info(f"✅ Position inserted: {position_id}")
+            
+            # Insert trade
+            trade_data = {
+                'bot_id': self.bot_id,
+                'position_id': position_id,
+                'symbol': pair,
+                'side': 'buy' if side == 'long' else 'sell',
+                'size': position_size,
+                'price': price,
+                'executed_at': datetime.now().isoformat(),
+                'mode': self.mode
+            }
+            
+            logger.info(f"📝 Inserting trade for {pair} {side} @ ${price:.2f}")
+            trade_result = supabase.table('bot_trades').insert(trade_data).execute()
+            
+            if not trade_result.data or len(trade_result.data) == 0:
+                logger.error(f"❌ Trade insert returned no data for {pair}")
+                await self.log('error', f"❌ Failed to insert trade for {pair} - No data returned", {})
+                return False
+            
+            logger.info(f"✅ Trade inserted successfully")
+            
+            await self.log(
+                'trade',
+                f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
+                {'position_id': position_id, 'side': side, 'price': price}
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ CRITICAL ERROR opening position for {pair}: {e}", exc_info=True)
+            await self.log('error', f"❌ Failed to open position for {pair}: {str(e)}", {'error': str(e)})
+            return False
     
     async def check_positions(self):
         """Check and manage open positions"""

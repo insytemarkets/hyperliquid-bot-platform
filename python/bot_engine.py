@@ -5,6 +5,7 @@ Runs 24/7 on Render, connects to Hyperliquid WebSocket, writes to Supabase
 
 import asyncio
 import os
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import json
@@ -471,11 +472,16 @@ class BotInstance:
                 
                 if reason:
                     logger.info(f"✅ {pair} TRADE SIGNAL TRIGGERED: {reason}")
-                    success = await self.open_position(pair, 'long', current_price)
-                    if success:
-                        await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
-                    else:
-                        await self.log('error', f"❌ Failed to open position for {pair}: {reason}", {})
+                    try:
+                        success = await self.open_position(pair, 'long', current_price)
+                        if success:
+                            await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
+                        else:
+                            # open_position already logged the error, just log that trade signal failed
+                            logger.warning(f"⚠️ Trade signal triggered but position open failed for {pair}")
+                    except Exception as open_error:
+                        logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
+                        await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                 else:
                     logger.info(f"⏭️ {pair} No trade signal - Conditions not met")
                     
@@ -606,7 +612,9 @@ class BotInstance:
                 take_profit = price * (1 - take_profit_pct / 100)
             
             # Insert position
+            position_id = str(uuid.uuid4())  # Generate ID for position
             position_data = {
+                'id': position_id,
                 'bot_id': self.bot_id,
                 'symbol': pair,
                 'side': side,
@@ -622,15 +630,55 @@ class BotInstance:
             logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f}")
             try:
                 result = supabase.table('bot_positions').insert(position_data).execute()
-                logger.debug(f"Supabase insert result type: {type(result)}, has data: {hasattr(result, 'data')}, has error: {hasattr(result, 'error')}")
+                
+                # Log result structure for debugging
+                logger.debug(f"Insert result: type={type(result)}, dir={[x for x in dir(result) if not x.startswith('_')]}")
+                if hasattr(result, 'data'):
+                    logger.debug(f"Result.data: {result.data}")
+                if hasattr(result, 'error'):
+                    logger.debug(f"Result.error: {result.error}")
+                
             except Exception as e:
-                logger.error(f"❌ Exception inserting position: {e}", exc_info=True)
-                await self.log('error', f"❌ Exception inserting position for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
+                # Supabase Python client raises exceptions for errors
+                error_str = str(e)
+                error_type = type(e).__name__
+                logger.error(f"❌ Exception inserting position: {error_type}: {error_str}", exc_info=True)
+                
+                # Try to extract error message from exception - be careful with attribute access
+                error_msg = error_str  # Default to string representation
+                try:
+                    if hasattr(e, 'message') and e.message:
+                        error_msg = str(e.message)
+                    elif hasattr(e, 'args') and len(e.args) > 0:
+                        error_msg = str(e.args[0])
+                    elif hasattr(e, '__dict__'):
+                        # Check if error has a message in its dict
+                        if 'message' in e.__dict__:
+                            error_msg = str(e.__dict__['message'])
+                except Exception as extract_error:
+                    logger.error(f"❌ Error extracting error message: {extract_error}")
+                    error_msg = error_str
+                
+                try:
+                    await self.log('error', f"❌ Exception inserting position for {pair}: {error_msg}", {
+                        'error': error_msg,
+                        'error_type': error_type,
+                        'full_error': error_str
+                    })
+                except Exception as log_error:
+                    logger.error(f"❌ Failed to log error: {log_error}")
+                
                 return False
             
-            # Check for Supabase errors - handle different error formats
+            # Check for Supabase errors in result object
             if hasattr(result, 'error') and result.error:
-                error_msg = str(result.error) if result.error else "Unknown error"
+                # Handle different error formats
+                if isinstance(result.error, dict):
+                    error_msg = result.error.get('message', str(result.error))
+                elif isinstance(result.error, str):
+                    error_msg = result.error
+                else:
+                    error_msg = str(result.error)
                 logger.error(f"❌ Supabase error inserting position: {error_msg} | Full result: {result}")
                 await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg, 'full_result': str(result)})
                 return False
@@ -643,25 +691,18 @@ class BotInstance:
                 return False
             
             if not hasattr(result, 'data') or not result.data or len(result.data) == 0:
-                error_msg = f"No data returned from insert. Result type: {type(result)}, Result: {result}, Dir: {dir(result)}"
+                error_msg = f"No data returned from insert. Result type: {type(result)}, Result: {result}"
                 logger.error(f"❌ Position insert returned no data for {pair}: {error_msg}")
                 await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {'result': str(result), 'result_type': str(type(result))})
                 return False
             
-            try:
-                position_id = result.data[0].get('id') if isinstance(result.data[0], dict) else result.data[0]['id']
-                if not position_id:
-                    logger.error(f"❌ Position insert returned data but no ID: {result.data}")
-                    await self.log('error', f"❌ Failed to get position ID for {pair}", {'result_data': str(result.data)})
-                    return False
-                logger.info(f"✅ Position inserted: {position_id}")
-            except (KeyError, IndexError, TypeError) as e:
-                logger.error(f"❌ Error accessing position ID: {e} | Result data: {result.data}", exc_info=True)
-                await self.log('error', f"❌ Failed to access position ID for {pair}: {str(e)}", {'error': str(e), 'result_data': str(result.data)})
-                return False
+            # Verify the insert succeeded (we already have position_id from generation)
+            logger.info(f"✅ Position inserted: {position_id}")
             
             # Insert trade
+            trade_id = str(uuid.uuid4())  # Generate ID for trade
             trade_data = {
+                'id': trade_id,
                 'bot_id': self.bot_id,
                 'position_id': position_id,
                 'symbol': pair,

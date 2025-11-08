@@ -4,37 +4,8 @@
  */
 
 import { supabase } from '../supabase/supabaseClient';
-import { StrategyConfig } from '../bot-engine/types';
 
 const FUNCTIONS_BASE_URL = 'https://oqmaogkrkupqulcregpz.supabase.co/functions/v1';
-
-/**
- * Get auth headers for API calls
- */
-async function getAuthHeaders() {
-  const { data: { session }, error } = await supabase.auth.getSession();
-  
-  console.log('🔐 Auth session check:', { 
-    hasSession: !!session, 
-    hasAccessToken: !!session?.access_token,
-    error: error?.message 
-  });
-  
-  if (error) {
-    console.error('❌ Session error:', error);
-    throw new Error(`Session error: ${error.message}`);
-  }
-  
-  if (!session?.access_token) {
-    console.error('❌ No session or access token found');
-    throw new Error('Not authenticated - please log in again');
-  }
-
-  return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${session.access_token}`,
-  };
-}
 
 /**
  * Deploy a new bot - directly to Supabase, no Edge Function!

@@ -146,6 +146,9 @@ class BotInstance:
         self.position_log_ids: Dict[str, str] = {}  # Track position status log IDs per pair (for updating in place)
         self.monitoring_log_ids: Dict[str, str] = {}  # Track monitoring log IDs per pair (for updating in place)
         self.last_position_update_time: Dict[str, float] = {}  # Track last position update time per pair (update every 5s)
+        self.last_market_data_fetch: float = 0  # Track last market data fetch time
+        self.cached_market_data: dict = {}  # Cache market data to avoid rate limits
+        self.market_data_cache_ttl = 2  # Cache market data for 2 seconds
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -184,13 +187,30 @@ class BotInstance:
     
     async def tick(self):
         """Run one tick of this bot"""
-        # Fetch current prices
-        try:
-            all_mids = info.all_mids()
-        except Exception as e:
-            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
-            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
-            return
+        # Fetch current prices with caching to avoid rate limits
+        current_time = datetime.now().timestamp()
+        all_mids = {}
+        
+        # Check cache first
+        if current_time - self.last_market_data_fetch < self.market_data_cache_ttl:
+            all_mids = self.cached_market_data
+            logger.debug(f"Using cached market data (age: {current_time - self.last_market_data_fetch:.1f}s)")
+        else:
+            # Fetch fresh data
+            try:
+                all_mids = info.all_mids()
+                self.cached_market_data = all_mids
+                self.last_market_data_fetch = current_time
+                logger.debug(f"Fetched fresh market data")
+            except Exception as e:
+                logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+                # Use cached data if available, even if expired
+                if self.cached_market_data:
+                    logger.warning(f"Using stale cache due to API error: {e}")
+                    all_mids = self.cached_market_data
+                else:
+                    await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+                    return
         
         # Update last prices
         for pair in self.strategy['pairs']:
@@ -821,6 +841,21 @@ class BotInstance:
     
     async def check_positions(self):
         """Check and manage open positions"""
+        # Refresh positions from database to get latest data (including updated unrealized_pnl)
+        try:
+            result = supabase.table('bot_positions')\
+                .select('*')\
+                .eq('bot_id', self.bot_id)\
+                .eq('status', 'open')\
+                .execute()
+            
+            if result.data:
+                # Update self.positions with fresh data from database
+                self.positions = result.data
+        except Exception as e:
+            logger.warning(f"Failed to refresh positions from database: {e}")
+            # Continue with existing self.positions if refresh fails
+        
         for position in self.positions:
             pair = position['symbol']
             
@@ -1009,7 +1044,7 @@ class BotInstance:
                 log_id = log_id_dict[pair]
                 # Update existing log
                 try:
-                    supabase.table('bot_logs')\
+                    update_result = supabase.table('bot_logs')\
                         .update({
                             'message': message,
                             'data': data,
@@ -1017,7 +1052,14 @@ class BotInstance:
                         })\
                         .eq('id', log_id)\
                         .execute()
-                    logger.debug(f"Updated {update_type} log for {pair}")
+                    
+                    # Verify update succeeded
+                    if update_result.data and len(update_result.data) > 0:
+                        logger.debug(f"✅ Updated {update_type} log for {pair} (ID: {log_id})")
+                    else:
+                        logger.warning(f"⚠️ Update returned no data for {pair}, log may not exist. Creating new.")
+                        # Log doesn't exist, create new one
+                        raise Exception("Log entry not found")
                 except Exception as e:
                     logger.warning(f"Failed to update log for {pair}, creating new: {e}")
                     # If update fails, create new log

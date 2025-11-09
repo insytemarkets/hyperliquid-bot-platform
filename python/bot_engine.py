@@ -317,10 +317,8 @@ class BotInstance:
             return
         
         for pair in self.strategy['pairs']:
-            # Skip if already have position
-            if any(p['symbol'] == pair for p in self.positions):
-                await self.log('info', f"⏭️ Skipping {pair} - Already have open position", {})
-                continue
+            # Check if already have position (skip trading, but still log market data)
+            has_open_position = any(p['symbol'] == pair for p in self.positions)
             
             try:
                 # Get current price
@@ -398,10 +396,8 @@ class BotInstance:
                 # Has volume?
                 has_volume = volume_weight > 0.5
                 
-                # DEBUG: Log all condition checks
-                logger.info(f"{pair} | ${current_price:.2f} | 5m H/L: ${highs['5m']:.2f}/${lows['5m']:.2f} | Near 5m H/L: {near_high_5m}/{near_low_5m} | Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
-                
-                # Log detailed analysis (only every 30 seconds to avoid spam)
+                # Log detailed market analysis (only every 30 seconds to avoid spam)
+                # This logs even when we have an open position so we can monitor levels
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     # Calculate how close we are to triggers for ALL timeframes
@@ -412,9 +408,18 @@ class BotInstance:
                     high_30m_distance = ((current_price / highs['30m']) - 1) * 100
                     low_30m_distance = ((lows['30m'] / current_price) - 1) * 100
                     
+                    # Add position status to log if we have one
+                    position_status = ""
+                    if has_open_position:
+                        open_pos = next((p for p in self.positions if p['symbol'] == pair), None)
+                        if open_pos:
+                            entry = open_pos.get('entry_price', 0)
+                            current_pnl = open_pos.get('unrealized_pnl', 0)
+                            position_status = f" | Open: Entry ${entry:.2f} | P&L: ${current_pnl:.2f}"
+                    
                     await self.log(
                         'market_data',
-                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/{lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x",
+                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x{position_status}",
                         {
                             'pair': pair,
                             'current_price': current_price,
@@ -437,20 +442,18 @@ class BotInstance:
                             'near_high_30m': near_high_30m,
                             'near_low_5m': near_low_5m,
                             'near_low_15m': near_low_15m,
-                            'near_low_30m': near_low_30m
+                            'near_low_30m': near_low_30m,
+                            'has_open_position': has_open_position
                         }
                     )
                     self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
+                # Only check for new trades if we don't already have a position
+                if has_open_position:
+                    continue  # Skip trading logic, but we've already logged market data above
+                
                 # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
-                
-                # DEBUG: Log all condition checks before trade decision
-                logger.info(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
-                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} | "
-                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} | "
-                          f"Near 5m H/L: {near_high_5m}/{near_low_5m} | "
-                          f"Volume: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
                 # Near 30m high with volume
                 if near_high_30m and has_volume:
@@ -482,8 +485,6 @@ class BotInstance:
                     except Exception as open_error:
                         logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                         await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
-                else:
-                    logger.info(f"⏭️ {pair} No trade signal - Conditions not met")
                     
             except Exception as e:
                 logger.error(f"❌ Error in multi-timeframe analysis for {pair}: {e}", exc_info=True)

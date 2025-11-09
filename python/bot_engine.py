@@ -599,9 +599,15 @@ class BotInstance:
     async def open_position(self, pair: str, side: str, price: float) -> bool:
         """Open a new position - returns True if successful, False otherwise"""
         try:
-            position_size = self.strategy['position_size']
+            position_size_usd = self.strategy['position_size']  # Position size in USD
             stop_loss_pct = self.strategy['stop_loss_percent']
             take_profit_pct = self.strategy['take_profit_percent']
+            
+            # CRITICAL: Convert USD position size to units (size = USD / price)
+            # position_size is in dollars, but 'size' field should be in units
+            position_size_units = position_size_usd / price if price > 0 else 0
+            
+            logger.info(f"💰 Position size: ${position_size_usd:.2f} USD = {position_size_units:.6f} {pair} units @ ${price:.2f}")
             
             # Calculate SL/TP
             if side == 'long':
@@ -618,7 +624,7 @@ class BotInstance:
                 'bot_id': self.bot_id,
                 'symbol': pair,
                 'side': side,
-                'size': position_size,
+                'size': position_size_units,  # Store as units, not USD!
                 'entry_price': price,
                 'current_price': price,
                 'stop_loss': stop_loss,
@@ -707,7 +713,7 @@ class BotInstance:
                 'position_id': position_id,
                 'symbol': pair,
                 'side': 'buy' if side == 'long' else 'sell',
-                'size': position_size,
+                'size': position_size_units,  # Use units, not USD
                 'price': price,
                 'executed_at': datetime.now().isoformat(),
                 'mode': self.mode

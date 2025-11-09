@@ -51,15 +51,26 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
         // Initial load: replace all logs
         setLogs(fetchedLogs.reverse());
       } else {
-        // Incremental update: only add NEW logs
+        // Incremental update: add NEW logs AND update existing ones
         setLogs(prevLogs => {
-          const existingIds = new Set(prevLogs.map(log => log.id));
-          const newLogs = fetchedLogs.filter(log => !existingIds.has(log.id));
+          const existingLogMap = new Map(prevLogs.map(log => [log.id, log]));
+          const fetchedLogMap = new Map(fetchedLogs.map(log => [log.id, log]));
           
-          if (newLogs.length === 0) return prevLogs; // No new logs, no update
+          // Update existing logs with fresh data (for in-place updates)
+          fetchedLogMap.forEach((fetchedLog, id) => {
+            if (existingLogMap.has(id)) {
+              existingLogMap.set(id, fetchedLog); // Update with fresh data
+            } else {
+              existingLogMap.set(id, fetchedLog); // Add new log
+            }
+          });
           
-          // Add new logs to the end and keep only last 200
-          return [...prevLogs, ...newLogs.reverse()].slice(-200);
+          // Convert back to array, sort by created_at, keep last 200
+          const updatedLogs = Array.from(existingLogMap.values())
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+            .slice(-200);
+          
+          return updatedLogs;
         });
       }
       
@@ -78,18 +89,18 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
     }
   }, [isOpen, botId]);
 
-  // Poll for new logs every 2 seconds (smooth incremental updates)
+  // Poll for new/updated logs every 3 seconds (handles both inserts and updates)
   useEffect(() => {
     if (!isOpen) return;
 
     const interval = setInterval(() => {
-      fetchLogs(false); // Incremental update without loading indicator
-    }, 2000);
+      fetchLogs(false); // Fetch updates without loading indicator
+    }, 3000); // Every 3 seconds
 
     return () => clearInterval(interval);
   }, [isOpen, botId]);
 
-  // 🔥 REAL-TIME SUBSCRIPTION
+  // 🔥 REAL-TIME SUBSCRIPTION (handles both INSERT and UPDATE)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -106,16 +117,49 @@ const BotLogs: React.FC<BotLogsProps> = ({ botId, isOpen }) => {
         (payload) => {
           const newLog = payload.new as BotLog;
           
-          // Add new log to bottom, keep only last 200
-          setLogs((prevLogs) => [...prevLogs, newLog].slice(-200));
+          // Add new log, keep only last 200
+          setLogs((prevLogs) => {
+            const exists = prevLogs.some(log => log.id === newLog.id);
+            if (exists) return prevLogs; // Already have it
+            return [...prevLogs, newLog].slice(-200);
+          });
+          setRealtimeConnected(true);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bot_logs',
+          filter: `bot_id=eq.${botId}`,
+        },
+        (payload) => {
+          const updatedLog = payload.new as BotLog;
+          
+          // Update existing log in place
+          setLogs((prevLogs) => {
+            const index = prevLogs.findIndex(log => log.id === updatedLog.id);
+            if (index >= 0) {
+              // Replace the log at this index with updated data
+              const updated = [...prevLogs];
+              updated[index] = updatedLog;
+              return updated;
+            } else {
+              // Log doesn't exist yet, add it
+              return [...prevLogs, updatedLog].slice(-200);
+            }
+          });
           setRealtimeConnected(true);
         }
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setRealtimeConnected(true);
+          console.log('✅ BotLogs: Real-time subscription active');
         } else if (status === 'CLOSED') {
           setRealtimeConnected(false);
+          console.log('⚠️ BotLogs: Real-time subscription closed');
         }
       });
 

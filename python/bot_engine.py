@@ -143,6 +143,9 @@ class BotInstance:
         self.last_snapshot_log_time: float = 0  # Track last snapshot log
         self.last_analysis_log_time: float = 0  # Track last detailed analysis log (separate from snapshot)
         self.market_log_interval = 30  # Log market data every 30 seconds
+        self.position_log_ids: Dict[str, str] = {}  # Track position status log IDs per pair (for updating in place)
+        self.monitoring_log_ids: Dict[str, str] = {}  # Track monitoring log IDs per pair (for updating in place)
+        self.last_position_update_time: Dict[str, float] = {}  # Track last position update time per pair (update every 5s)
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -448,6 +451,44 @@ class BotInstance:
                     )
                     self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
+                # Update monitoring log when no position is open (every 5 seconds)
+                if not has_open_position:
+                    current_time_monitor = datetime.now().timestamp()
+                    last_monitor_update = self.last_position_update_time.get(pair, 0)
+                    
+                    if current_time_monitor - last_monitor_update >= 5:  # Update every 5 seconds
+                        # Calculate distances to entry levels
+                        high_5m_dist = ((highs['5m'] - current_price) / current_price * 100) if highs['5m'] > 0 else 0
+                        low_5m_dist = ((current_price - lows['5m']) / current_price * 100) if lows['5m'] > 0 else 0
+                        high_15m_dist = ((highs['15m'] - current_price) / current_price * 100) if highs['15m'] > 0 else 0
+                        low_15m_dist = ((current_price - lows['15m']) / current_price * 100) if lows['15m'] > 0 else 0
+                        high_30m_dist = ((highs['30m'] - current_price) / current_price * 100) if highs['30m'] > 0 else 0
+                        low_30m_dist = ((current_price - lows['30m']) / current_price * 100) if lows['30m'] > 0 else 0
+                        
+                        # Determine nearest entry level
+                        nearest_level = "Monitoring..."
+                        if near_high_30m or near_high_15m or near_high_5m:
+                            nearest_level = "Near HIGH - Potential LONG entry"
+                        elif near_low_30m or near_low_15m or near_low_5m:
+                            nearest_level = "Near LOW - Potential LONG entry"
+                        
+                        message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_dist:+.2f}%/{low_5m_dist:+.2f}%) | Vol: {volume_weight:.2f}x"
+                        data = {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'highs_30m': highs['30m'],
+                            'lows_30m': lows['30m'],
+                            'highs_15m': highs['15m'],
+                            'lows_15m': lows['15m'],
+                            'highs_5m': highs['5m'],
+                            'lows_5m': lows['5m'],
+                            'volume_weight': volume_weight,
+                            'update_type': 'monitoring'
+                        }
+                        
+                        await self.log_update('monitoring', pair, message, data)
+                        self.last_position_update_time[pair] = current_time_monitor
+                
                 # Only check for new trades if we don't already have a position
                 if has_open_position:
                     continue  # Skip trading logic, but we've already logged market data above
@@ -748,7 +789,7 @@ class BotInstance:
                 'id': position_id,
                 'symbol': pair,
                 'side': side,
-                'size': position_size,
+                'size': position_size_units,
                 'entry_price': price,
                 'current_price': price,
                 'stop_loss': stop_loss,
@@ -756,6 +797,14 @@ class BotInstance:
                 'status': 'open'
             })
             logger.info(f"✅ Updated positions list: {len(self.positions)} positions")
+            
+            # Delete monitoring log since we now have a position
+            if pair in self.monitoring_log_ids:
+                try:
+                    supabase.table('bot_logs').delete().eq('id', self.monitoring_log_ids[pair]).execute()
+                    del self.monitoring_log_ids[pair]
+                except Exception as e:
+                    logger.warning(f"Failed to delete monitoring log for {pair}: {e}")
             
             await self.log(
                 'trade',
@@ -796,13 +845,33 @@ class BotInstance:
                 .eq('id', position['id'])\
                 .execute()
             
-            # Log position status
-            emoji = '💚' if pnl >= 0 else '❤️'
-            await self.log(
-                'info',
-                f"{emoji} {side.upper()} {pair} | Entry: ${entry_price:.2f} → ${current_price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
-                {'position_id': position['id'], 'pnl': pnl, 'pnl_pct': pnl_pct}
-            )
+            # Update position status log in place (every 5 seconds)
+            current_time = datetime.now().timestamp()
+            last_update = self.last_position_update_time.get(pair, 0)
+            
+            if current_time - last_update >= 5:  # Update every 5 seconds
+                emoji = '💚' if pnl >= 0 else '❤️'
+                stop_loss = position.get('stop_loss')
+                take_profit = position.get('take_profit')
+                
+                # Format TP/SL info
+                tp_str = f"TP: ${take_profit:.2f}" if take_profit else "TP: N/A"
+                sl_str = f"SL: ${stop_loss:.2f}" if stop_loss else "SL: N/A"
+                
+                message = f"📊 {emoji} {side.upper()} {pair} | Entry: ${entry_price:.2f} → ${current_price:.2f} | {tp_str} | {sl_str} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)"
+                data = {
+                    'position_id': position['id'],
+                    'pnl': pnl,
+                    'pnl_pct': pnl_pct,
+                    'entry_price': entry_price,
+                    'current_price': current_price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'update_type': 'position_status'
+                }
+                
+                await self.log_update('position_status', pair, message, data)
+                self.last_position_update_time[pair] = current_time
             
             # Check exit conditions
             should_close = False
@@ -891,6 +960,19 @@ class BotInstance:
             self.positions = [p for p in self.positions if p['id'] != position['id']]
             logger.info(f"✅ Removed position from list. Remaining: {len(self.positions)}")
             
+            # Delete the position status log (it will be replaced with monitoring log)
+            pair = position['symbol']
+            if pair in self.position_log_ids:
+                try:
+                    supabase.table('bot_logs').delete().eq('id', self.position_log_ids[pair]).execute()
+                    del self.position_log_ids[pair]
+                except Exception as e:
+                    logger.warning(f"Failed to delete position log for {pair}: {e}")
+            
+            # Clear position update time
+            if pair in self.last_position_update_time:
+                del self.last_position_update_time[pair]
+            
             await self.log(
                 'trade',
                 f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | Entry: ${position['entry_price']:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
@@ -915,6 +997,55 @@ class BotInstance:
             logger.info(f"[{self.name}] {message}")
         except Exception as e:
             logger.error(f"Failed to log: {e}")
+    
+    async def log_update(self, update_type: str, pair: str, message: str, data: dict):
+        """Update an existing log entry in place, or create new if doesn't exist"""
+        try:
+            # Determine which log ID dict to use
+            log_id_dict = self.position_log_ids if update_type == 'position_status' else self.monitoring_log_ids
+            
+            # Check if we have an existing log ID for this pair
+            if pair in log_id_dict:
+                log_id = log_id_dict[pair]
+                # Update existing log
+                try:
+                    supabase.table('bot_logs')\
+                        .update({
+                            'message': message,
+                            'data': data,
+                            'created_at': datetime.now().isoformat()  # Update timestamp so it stays at top
+                        })\
+                        .eq('id', log_id)\
+                        .execute()
+                    logger.debug(f"Updated {update_type} log for {pair}")
+                except Exception as e:
+                    logger.warning(f"Failed to update log for {pair}, creating new: {e}")
+                    # If update fails, create new log
+                    result = supabase.table('bot_logs').insert({
+                        'bot_id': self.bot_id,
+                        'user_id': self.user_id,
+                        'log_type': 'info',
+                        'message': message,
+                        'data': data,
+                        'created_at': datetime.now().isoformat()
+                    }).execute()
+                    if result.data and len(result.data) > 0:
+                        log_id_dict[pair] = result.data[0]['id']
+            else:
+                # Create new log and store ID
+                result = supabase.table('bot_logs').insert({
+                    'bot_id': self.bot_id,
+                    'user_id': self.user_id,
+                    'log_type': 'info',
+                    'message': message,
+                    'data': data,
+                    'created_at': datetime.now().isoformat()
+                }).execute()
+                if result.data and len(result.data) > 0:
+                    log_id_dict[pair] = result.data[0]['id']
+                    logger.debug(f"Created new {update_type} log for {pair}")
+        except Exception as e:
+            logger.error(f"Failed to log_update for {pair}: {e}")
 
 
 async def main():

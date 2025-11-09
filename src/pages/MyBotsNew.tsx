@@ -4,12 +4,14 @@ import Sidebar from '../components/Sidebar';
 import { useBot } from '../contexts/BotContextNew';
 import * as BotAPI from '../services/api/botApi';
 import BotLogs from '../components/BotLogs';
+import BotTrades from '../components/BotTrades';
 
 const MyBotsNew: React.FC = () => {
   const { bots, strategies, pauseBot, resumeBot, stopBot, refreshBots } = useBot();
   const [filterStatus, setFilterStatus] = useState<'all' | 'running' | 'paused' | 'paper' | 'live'>('all');
   const [testLoading, setTestLoading] = useState(false);
   const [expandedBotId, setExpandedBotId] = useState<string | null>(null);
+  const [showTradesBotId, setShowTradesBotId] = useState<string | null>(null);
 
   const filteredBots = bots.filter(bot => {
     if (filterStatus === 'all') return true;
@@ -314,6 +316,12 @@ const MyBotsNew: React.FC = () => {
                         >
                           📋 {expandedBotId === bot.id ? 'Hide' : 'View'} Logs
                         </button>
+                        <button 
+                          onClick={() => setShowTradesBotId(showTradesBotId === bot.id ? null : bot.id)}
+                          className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                          📊 {showTradesBotId === bot.id ? 'Hide' : 'View'} Trades
+                        </button>
                         <button className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                           View Details
                         </button>
@@ -321,6 +329,9 @@ const MyBotsNew: React.FC = () => {
 
                       {/* Bot Logs */}
                       <BotLogs botId={bot.id} isOpen={expandedBotId === bot.id} />
+                      
+                      {/* Bot Trades */}
+                      <BotTrades botId={bot.id} isOpen={showTradesBotId === bot.id} />
                     </div>
                   );
                 })}

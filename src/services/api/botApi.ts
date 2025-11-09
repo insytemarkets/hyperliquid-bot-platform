@@ -297,3 +297,137 @@ export async function getBotLogs(botId: string, limit: number = 100) {
     throw error;
   }
 }
+
+/**
+ * Get trades for a specific bot
+ */
+export async function getBotTrades(botId: string, limit: number = 50) {
+  console.log('📊 API: Fetching trades for bot:', botId);
+  
+  try {
+    // Fetch trades
+    const { data: trades, error: tradesError } = await supabase
+      .from('bot_trades')
+      .select('*')
+      .eq('bot_id', botId)
+      .order('executed_at', { ascending: false })
+      .limit(limit * 2); // Get more to account for entry/exit pairs
+
+    if (tradesError) {
+      console.error('❌ Supabase error fetching trades:', tradesError);
+      throw new Error(tradesError.message);
+    }
+
+    // Fetch positions to get entry_price, stop_loss, take_profit, status
+    const { data: positions, error: positionsError } = await supabase
+      .from('bot_positions')
+      .select('*')
+      .eq('bot_id', botId);
+
+    if (positionsError) {
+      console.error('❌ Supabase error fetching positions:', positionsError);
+      throw new Error(positionsError.message);
+    }
+
+    // Create position map for quick lookup
+    const positionMap = new Map<string, any>();
+    positions?.forEach((pos: any) => {
+      positionMap.set(pos.id, pos);
+    });
+
+    // Process trades to group entry/exit pairs
+    const processedTrades: any[] = [];
+    const tradeMap = new Map<string, any>();
+
+    // Group trades by position_id
+    trades?.forEach((trade: any) => {
+      const positionId = trade.position_id;
+      
+      if (!tradeMap.has(positionId)) {
+        tradeMap.set(positionId, {
+          position_id: positionId,
+          symbol: trade.symbol,
+          entry_trade: null,
+          exit_trade: null,
+          position: positionMap.get(positionId) || null
+        });
+      }
+
+      const tradeData = tradeMap.get(positionId);
+      
+      if (trade.side === 'buy') {
+        tradeData.entry_trade = trade;
+      } else if (trade.side === 'sell') {
+        tradeData.exit_trade = trade;
+      }
+    });
+
+    // Convert to trade pairs
+    tradeMap.forEach((tradeData) => {
+      const position = tradeData.position;
+      
+      if (tradeData.entry_trade && tradeData.exit_trade) {
+        // Closed position - has both entry and exit
+        const entryPrice = position?.entry_price || tradeData.entry_trade.price;
+        const exitPrice = tradeData.exit_trade.price;
+        const pnl = tradeData.exit_trade.pnl || 0;
+        const pnlPct = entryPrice ? ((exitPrice - entryPrice) / entryPrice) * 100 : 0;
+
+        // Determine reason from position status or price comparison
+        let reason = 'Closed';
+        if (position) {
+          if (position.status === 'closed') {
+            // Check if it hit TP or SL
+            if (position.take_profit && Math.abs(exitPrice - position.take_profit) < 0.01) {
+              reason = 'Take Profit';
+            } else if (position.stop_loss && Math.abs(exitPrice - position.stop_loss) < 0.01) {
+              reason = 'Stop Loss';
+            }
+          }
+        }
+
+        processedTrades.push({
+          id: tradeData.position_id,
+          symbol: tradeData.symbol,
+          entry_price: entryPrice,
+          exit_price: exitPrice,
+          entry_time: tradeData.entry_trade.executed_at,
+          exit_time: tradeData.exit_trade.executed_at,
+          pnl: pnl,
+          pnl_pct: pnlPct,
+          size: tradeData.entry_trade.size,
+          side: 'long',
+          reason: reason
+        });
+      } else if (tradeData.entry_trade && !tradeData.exit_trade) {
+        // Open position - only entry
+        processedTrades.push({
+          id: tradeData.position_id,
+          symbol: tradeData.symbol,
+          entry_price: position?.entry_price || tradeData.entry_trade.price,
+          exit_price: null,
+          entry_time: tradeData.entry_trade.executed_at,
+          exit_time: null,
+          pnl: position?.unrealized_pnl || 0,
+          pnl_pct: 0,
+          size: tradeData.entry_trade.size,
+          side: 'long',
+          reason: 'Open'
+        });
+      }
+    });
+
+    // Sort by exit_time (most recent first), then by entry_time for open positions
+    processedTrades.sort((a, b) => {
+      const aTime = a.exit_time || a.entry_time;
+      const bTime = b.exit_time || b.entry_time;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+
+    console.log('✅ Retrieved', processedTrades.length, 'trades');
+    return processedTrades.slice(0, limit); // Return only requested limit
+  } catch (error) {
+    console.error('❌ Failed to fetch bot trades:', error);
+    throw error;
+  }
+}

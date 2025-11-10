@@ -149,6 +149,8 @@ class BotInstance:
         self.last_market_data_fetch: float = 0  # Track last market data fetch time
         self.cached_market_data: dict = {}  # Cache market data to avoid rate limits
         self.market_data_cache_ttl = 2  # Cache market data for 2 seconds
+        self.last_position_close_time: Dict[str, float] = {}  # Track when positions were closed (cooldown period)
+        self.position_cooldown = 60  # Wait 60 seconds after closing before opening new position on same pair
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -358,17 +360,20 @@ class BotInstance:
                 
                 for tf in timeframes:
                     try:
-                        # Get candles for timeframe
+                        # Get candles for timeframe - use proper interval, not just 1m
                         end_time = int(datetime.now().timestamp() * 1000)
                         if tf == '5m':
-                            start_time = end_time - (5 * 60 * 1000)
-                            interval = '1m'
+                            # For 5m: get last 20 candles (100 minutes) to ensure we have enough data
+                            start_time = end_time - (20 * 5 * 60 * 1000)
+                            interval = '5m'  # Use 5m candles, not 1m!
                         elif tf == '15m':
-                            start_time = end_time - (15 * 60 * 1000)
-                            interval = '1m'
+                            # For 15m: get last 20 candles (300 minutes = 5 hours)
+                            start_time = end_time - (20 * 15 * 60 * 1000)
+                            interval = '15m'  # Use 15m candles, not 1m!
                         else:  # 30m
-                            start_time = end_time - (30 * 60 * 1000)
-                            interval = '1m'
+                            # For 30m: get last 20 candles (600 minutes = 10 hours)
+                            start_time = end_time - (20 * 30 * 60 * 1000)
+                            interval = '30m'  # Use 30m candles, not 1m!
                         
                         candles = await self.get_candles_cached(pair, interval, start_time, end_time)
                         
@@ -504,8 +509,23 @@ class BotInstance:
                 if has_open_position:
                     continue  # Skip trading logic, but we've already logged market data above
                 
+                # Check cooldown period - don't open new position immediately after closing
+                current_time = datetime.now().timestamp()
+                last_close_time = self.last_position_close_time.get(pair, 0)
+                if current_time - last_close_time < self.position_cooldown:
+                    remaining_cooldown = int(self.position_cooldown - (current_time - last_close_time))
+                    logger.debug(f"⏸️ {pair} in cooldown ({remaining_cooldown}s remaining) - skipping trade check")
+                    continue
+                
                 # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
+                
+                # Debug: Log all conditions for trade decision
+                logger.debug(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
+                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} (H=${highs['30m']:.2f} L=${lows['30m']:.2f}) | "
+                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} (H=${highs['15m']:.2f} L=${lows['15m']:.2f}) | "
+                          f"Near 5m H/L: {near_high_5m}/{near_low_5m} (H=${highs['5m']:.2f} L=${lows['5m']:.2f}) | "
+                          f"Volume: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
                 # Near 30m high with volume
                 if near_high_30m and has_volume:
@@ -998,6 +1018,10 @@ class BotInstance:
             # Clear position update time
             if pair in self.last_position_update_time:
                 del self.last_position_update_time[pair]
+            
+            # Record close time for cooldown period
+            self.last_position_close_time[pair] = datetime.now().timestamp()
+            logger.info(f"⏸️ {pair} cooldown started - will wait {self.position_cooldown}s before next trade")
             
             await self.log(
                 'trade',

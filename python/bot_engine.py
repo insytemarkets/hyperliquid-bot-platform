@@ -337,9 +337,8 @@ class BotInstance:
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""
         logger.info(f"🎯 Running Multi-Timeframe Breakout | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
-        if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({len(self.positions)}/{self.strategy['max_positions']})", {})
-            return
+        # Check if max positions reached (but still process pairs for market metrics)
+        max_positions_reached = len(self.positions) >= self.strategy['max_positions']
         
         for pair in self.strategy['pairs']:
             # Check if already have position (skip trading, but still log market data)
@@ -519,8 +518,8 @@ class BotInstance:
                         await self.log_update('monitoring', pair, message, data)
                         self.last_position_update_time[pair] = current_time_monitor
                 
-                # Only check for new trades if we don't already have a position
-                if has_open_position:
+                # Only check for new trades if we don't already have a position AND haven't reached max positions
+                if has_open_position or max_positions_reached:
                     continue  # Skip trading logic, but we've already logged market data above
                 
                 # Check cooldown period - don't open new position immediately after closing

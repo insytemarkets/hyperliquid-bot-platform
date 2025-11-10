@@ -140,11 +140,11 @@ class BotInstance:
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
-        self.last_snapshot_log_time: float = 0  # Track last snapshot log
-        self.last_analysis_log_time: float = 0  # Track last detailed analysis log (separate from snapshot)
+        self.last_analysis_log_time: float = 0  # Track last detailed analysis log
         self.market_log_interval = 30  # Log market data every 30 seconds
         self.position_log_ids: Dict[str, str] = {}  # Track position status log IDs per pair (for updating in place)
         self.monitoring_log_ids: Dict[str, str] = {}  # Track monitoring log IDs per pair (for updating in place)
+        self.market_metrics_log_ids: Dict[str, str] = {}  # Track market metrics log IDs per pair (for updating in place)
         self.last_position_update_time: Dict[str, float] = {}  # Track last position update time per pair (update every 5s)
         self.last_market_data_fetch: float = 0  # Track last market data fetch time
         self.cached_market_data: dict = {}  # Cache market data to avoid rate limits
@@ -219,15 +219,7 @@ class BotInstance:
             if pair in all_mids:
                 self.last_prices[pair] = float(all_mids[pair])
         
-        # Log market snapshot (only every 30 seconds to avoid spam)
-        current_time = datetime.now().timestamp()
-        if current_time - self.last_snapshot_log_time >= self.market_log_interval:
-            await self.log(
-                'market_data',
-                f"📊 Market Snapshot: {len(self.last_prices)} pairs tracked",
-                {'prices': self.last_prices}
-            )
-            self.last_snapshot_log_time = current_time
+        # Market snapshot removed - not needed, market metrics log shows all the info
         
         # Load open positions
         result = supabase.table('bot_positions')\
@@ -437,7 +429,7 @@ class BotInstance:
                 # Has volume?
                 has_volume = volume_weight > 0.5
                 
-                # Log detailed market analysis (only every 30 seconds to avoid spam)
+                # Update market metrics log in place (every 30 seconds) - persists and updates automatically
                 # This logs even when we have an open position so we can monitor levels
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
@@ -449,35 +441,36 @@ class BotInstance:
                     high_30m_distance = ((current_price / highs['30m']) - 1) * 100
                     low_30m_distance = ((lows['30m'] / current_price) - 1) * 100
                     
-                    await self.log(
-                        'market_data',
-                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x",
-                        {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'highs_30m': highs['30m'],
-                            'lows_30m': lows['30m'],
-                            'highs_15m': highs['15m'],
-                            'lows_15m': lows['15m'],
-                            'highs_5m': highs['5m'],
-                            'lows_5m': lows['5m'],
-                            'distance_to_high_30m': high_30m_distance,
-                            'distance_to_low_30m': low_30m_distance,
-                            'distance_to_high_15m': high_15m_distance,
-                            'distance_to_low_15m': low_15m_distance,
-                            'distance_to_high_5m': high_5m_distance,
-                            'distance_to_low_5m': low_5m_distance,
-                            'volume_weight': volume_weight,
-                            'has_volume': has_volume,
-                            'near_high_5m': near_high_5m,
-                            'near_high_15m': near_high_15m,
-                            'near_high_30m': near_high_30m,
-                            'near_low_5m': near_low_5m,
-                            'near_low_15m': near_low_15m,
-                            'near_low_30m': near_low_30m,
-                            'has_open_position': has_open_position
-                        }
-                    )
+                    message = f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
+                    data = {
+                        'pair': pair,
+                        'current_price': current_price,
+                        'highs_30m': highs['30m'],
+                        'lows_30m': lows['30m'],
+                        'highs_15m': highs['15m'],
+                        'lows_15m': lows['15m'],
+                        'highs_5m': highs['5m'],
+                        'lows_5m': lows['5m'],
+                        'distance_to_high_30m': high_30m_distance,
+                        'distance_to_low_30m': low_30m_distance,
+                        'distance_to_high_15m': high_15m_distance,
+                        'distance_to_low_15m': low_15m_distance,
+                        'distance_to_high_5m': high_5m_distance,
+                        'distance_to_low_5m': low_5m_distance,
+                        'volume_weight': volume_weight,
+                        'has_volume': has_volume,
+                        'near_high_5m': near_high_5m,
+                        'near_high_15m': near_high_15m,
+                        'near_high_30m': near_high_30m,
+                        'near_low_5m': near_low_5m,
+                        'near_low_15m': near_low_15m,
+                        'near_low_30m': near_low_30m,
+                        'has_open_position': has_open_position,
+                        'update_type': 'market_metrics'
+                    }
+                    
+                    # Use log_update to update in place instead of creating new log entries
+                    await self.log_update('market_metrics', pair, message, data)
                     self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
                 
                 # Update monitoring log when no position is open (every 5 seconds)
@@ -1065,19 +1058,29 @@ class BotInstance:
         """Update an existing log entry in place, or create new if doesn't exist"""
         try:
             # Determine which log ID dict to use
-            log_id_dict = self.position_log_ids if update_type == 'position_status' else self.monitoring_log_ids
+            if update_type == 'position_status':
+                log_id_dict = self.position_log_ids
+            elif update_type == 'market_metrics':
+                log_id_dict = self.market_metrics_log_ids
+            else:
+                log_id_dict = self.monitoring_log_ids
             
             # Check if we have an existing log ID for this pair
             if pair in log_id_dict:
                 log_id = log_id_dict[pair]
                 # Update existing log
                 try:
+                    # Update log_type for market_metrics to ensure it's correct
+                    update_data = {
+                        'message': message,
+                        'data': data,
+                        'created_at': datetime.now().isoformat()  # Update timestamp so it stays at top
+                    }
+                    if update_type == 'market_metrics':
+                        update_data['log_type'] = 'market_data'  # Ensure correct log type
+                    
                     update_result = supabase.table('bot_logs')\
-                        .update({
-                            'message': message,
-                            'data': data,
-                            'created_at': datetime.now().isoformat()  # Update timestamp so it stays at top
-                        })\
+                        .update(update_data)\
                         .eq('id', log_id)\
                         .execute()
                     
@@ -1091,10 +1094,11 @@ class BotInstance:
                 except Exception as e:
                     logger.warning(f"Failed to update log for {pair}, creating new: {e}")
                     # If update fails, create new log
+                    log_type = 'market_data' if update_type == 'market_metrics' else 'info'
                     result = supabase.table('bot_logs').insert({
                         'bot_id': self.bot_id,
                         'user_id': self.user_id,
-                        'log_type': 'info',
+                        'log_type': log_type,
                         'message': message,
                         'data': data,
                         'created_at': datetime.now().isoformat()
@@ -1103,10 +1107,11 @@ class BotInstance:
                         log_id_dict[pair] = result.data[0]['id']
             else:
                 # Create new log and store ID
+                log_type = 'market_data' if update_type == 'market_metrics' else 'info'
                 result = supabase.table('bot_logs').insert({
                     'bot_id': self.bot_id,
                     'user_id': self.user_id,
-                    'log_type': 'info',
+                    'log_type': log_type,
                     'message': message,
                     'data': data,
                     'created_at': datetime.now().isoformat()

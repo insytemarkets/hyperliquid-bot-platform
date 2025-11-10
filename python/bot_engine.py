@@ -431,18 +431,9 @@ class BotInstance:
                     high_30m_distance = ((current_price / highs['30m']) - 1) * 100
                     low_30m_distance = ((lows['30m'] / current_price) - 1) * 100
                     
-                    # Add position status to log if we have one
-                    position_status = ""
-                    if has_open_position:
-                        open_pos = next((p for p in self.positions if p['symbol'] == pair), None)
-                        if open_pos:
-                            entry = open_pos.get('entry_price', 0)
-                            current_pnl = open_pos.get('unrealized_pnl', 0)
-                            position_status = f" | Open: Entry ${entry:.2f} | P&L: ${current_pnl:.2f}"
-                    
                     await self.log(
                         'market_data',
-                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x{position_status}",
+                        f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x",
                         {
                             'pair': pair,
                             'current_price': current_price,

@@ -413,19 +413,27 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # DIP-BUYING STRATEGY: Tighter wiggle for lows (support), wider for highs (breakouts)
-                wiggle_low = 0.003  # 0.3% - tighter for precise support entries
-                wiggle_high = 0.007  # 0.7% - wider, only enter strong breakouts
+                # DIP-BUYING STRATEGY: Wider wiggle for lows to catch more support entries
+                # We prioritize lows, so give them more room to trigger
+                wiggle_low = 0.005  # 0.5% - wider to catch more dip opportunities
+                wiggle_high = 0.005  # 0.5% - same wiggle, but lows checked first
                 
                 # Near highs? (price within 0.7% of high - only strong breakouts)
-                near_high_1h = abs(current_price - highs['1h']) / highs['1h'] <= wiggle_high if highs.get('1h', 0) > 0 else False
-                near_high_30m = abs(current_price - highs['30m']) / highs['30m'] <= wiggle_high if highs.get('30m', 0) > 0 else False
-                near_high_15m = abs(current_price - highs['15m']) / highs['15m'] <= wiggle_high if highs.get('15m', 0) > 0 else False
+                # Use .get() to safely access dict values
+                high_1h_val = highs.get('1h', 0)
+                high_30m_val = highs.get('30m', 0)
+                high_15m_val = highs.get('15m', 0)
+                near_high_1h = abs(current_price - high_1h_val) / high_1h_val <= wiggle_high if high_1h_val > 0 else False
+                near_high_30m = abs(current_price - high_30m_val) / high_30m_val <= wiggle_high if high_30m_val > 0 else False
+                near_high_15m = abs(current_price - high_15m_val) / high_15m_val <= wiggle_high if high_15m_val > 0 else False
                 
                 # Near lows? (price within 0.3% of low - precise support entries)
-                near_low_1h = abs(current_price - lows['1h']) / lows['1h'] <= wiggle_low if lows.get('1h', 0) > 0 else False
-                near_low_30m = abs(current_price - lows['30m']) / lows['30m'] <= wiggle_low if lows.get('30m', 0) > 0 else False
-                near_low_15m = abs(current_price - lows['15m']) / lows['15m'] <= wiggle_low if lows.get('15m', 0) > 0 else False
+                low_1h_val = lows.get('1h', 0)
+                low_30m_val = lows.get('30m', 0)
+                low_15m_val = lows.get('15m', 0)
+                near_low_1h = abs(current_price - low_1h_val) / low_1h_val <= wiggle_low if low_1h_val > 0 else False
+                near_low_30m = abs(current_price - low_30m_val) / low_30m_val <= wiggle_low if low_30m_val > 0 else False
+                near_low_15m = abs(current_price - low_15m_val) / low_15m_val <= wiggle_low if low_15m_val > 0 else False
                 
                 # REQUIRE volume for ALL entries (no exceptions - volume confirms the move)
                 has_volume = volume_weight > 0.5
@@ -434,45 +442,58 @@ class BotInstance:
                 # This logs even when we have an open position so we can monitor levels
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                    # Calculate how close we are to triggers for ALL timeframes
-                    high_1h_distance = ((current_price / highs.get('1h', current_price)) - 1) * 100
-                    low_1h_distance = ((lows.get('1h', current_price) / current_price) - 1) * 100
-                    high_30m_distance = ((current_price / highs.get('30m', current_price)) - 1) * 100
-                    low_30m_distance = ((lows.get('30m', current_price) / current_price) - 1) * 100
-                    high_15m_distance = ((current_price / highs.get('15m', current_price)) - 1) * 100
-                    low_15m_distance = ((lows.get('15m', current_price) / current_price) - 1) * 100
-                    
-                    message = f"{pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
-                    data = {
-                        'pair': pair,
-                        'current_price': current_price,
-                        'highs_1h': highs.get('1h', 0),
-                        'lows_1h': lows.get('1h', 0),
-                        'highs_30m': highs.get('30m', 0),
-                        'lows_30m': lows.get('30m', 0),
-                        'highs_15m': highs.get('15m', 0),
-                        'lows_15m': lows.get('15m', 0),
-                        'distance_to_high_1h': high_1h_distance,
-                        'distance_to_low_1h': low_1h_distance,
-                        'distance_to_high_30m': high_30m_distance,
-                        'distance_to_low_30m': low_30m_distance,
-                        'distance_to_high_15m': high_15m_distance,
-                        'distance_to_low_15m': low_15m_distance,
-                        'volume_weight': volume_weight,
-                        'has_volume': has_volume,
-                        'near_high_1h': near_high_1h,
-                        'near_high_15m': near_high_15m,
-                        'near_high_30m': near_high_30m,
-                        'near_low_1h': near_low_1h,
-                        'near_low_15m': near_low_15m,
-                        'near_low_30m': near_low_30m,
-                        'has_open_position': has_open_position,
-                        'update_type': 'market_metrics'
-                    }
-                    
-                    # Use log_update to update in place instead of creating new log entries
-                    await self.log_update('market_metrics', pair, message, data)
-                    self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
+                    try:
+                        # Calculate how close we are to triggers for ALL timeframes
+                        # Handle division by zero safely
+                        high_1h_val_safe = highs.get('1h', current_price) if highs.get('1h', 0) > 0 else current_price
+                        low_1h_val_safe = lows.get('1h', current_price) if lows.get('1h', 0) > 0 else current_price
+                        high_30m_val_safe = highs.get('30m', current_price) if highs.get('30m', 0) > 0 else current_price
+                        low_30m_val_safe = lows.get('30m', current_price) if lows.get('30m', 0) > 0 else current_price
+                        high_15m_val_safe = highs.get('15m', current_price) if highs.get('15m', 0) > 0 else current_price
+                        low_15m_val_safe = lows.get('15m', current_price) if lows.get('15m', 0) > 0 else current_price
+                        
+                        high_1h_distance = ((current_price / high_1h_val_safe) - 1) * 100 if high_1h_val_safe > 0 else 0
+                        low_1h_distance = ((low_1h_val_safe / current_price) - 1) * 100 if current_price > 0 else 0
+                        high_30m_distance = ((current_price / high_30m_val_safe) - 1) * 100 if high_30m_val_safe > 0 else 0
+                        low_30m_distance = ((low_30m_val_safe / current_price) - 1) * 100 if current_price > 0 else 0
+                        high_15m_distance = ((current_price / high_15m_val_safe) - 1) * 100 if high_15m_val_safe > 0 else 0
+                        low_15m_distance = ((low_15m_val_safe / current_price) - 1) * 100 if current_price > 0 else 0
+                        
+                        message = f"{pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
+                        data = {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'highs_1h': highs.get('1h', 0),
+                            'lows_1h': lows.get('1h', 0),
+                            'highs_30m': highs.get('30m', 0),
+                            'lows_30m': lows.get('30m', 0),
+                            'highs_15m': highs.get('15m', 0),
+                            'lows_15m': lows.get('15m', 0),
+                            'distance_to_high_1h': high_1h_distance,
+                            'distance_to_low_1h': low_1h_distance,
+                            'distance_to_high_30m': high_30m_distance,
+                            'distance_to_low_30m': low_30m_distance,
+                            'distance_to_high_15m': high_15m_distance,
+                            'distance_to_low_15m': low_15m_distance,
+                            'volume_weight': volume_weight,
+                            'has_volume': has_volume,
+                            'near_high_1h': near_high_1h,
+                            'near_high_15m': near_high_15m,
+                            'near_high_30m': near_high_30m,
+                            'near_low_1h': near_low_1h,
+                            'near_low_15m': near_low_15m,
+                            'near_low_30m': near_low_30m,
+                            'has_open_position': has_open_position,
+                            'update_type': 'market_metrics'
+                        }
+                        
+                        # Use log_update to update in place instead of creating new log entries
+                        await self.log_update('market_metrics', pair, message, data)
+                        self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
+                    except Exception as e:
+                        logger.error(f"❌ Failed to log market metrics for {pair}: {e}", exc_info=True)
+                        # Still update timer so we don't spam errors
+                        self.last_analysis_log_time = current_time
                 
                 # Update monitoring log when no position is open (every 5 seconds)
                 if not has_open_position:
@@ -527,12 +548,19 @@ class BotInstance:
                 # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
                 
-                # Debug: Log all conditions for trade decision
-                logger.debug(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
-                          f"Near 1h H/L: {near_high_1h}/{near_low_1h} (H=${highs.get('1h', 0):.2f} L=${lows.get('1h', 0):.2f}) | "
-                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} (H=${highs.get('30m', 0):.2f} L=${lows.get('30m', 0):.2f}) | "
-                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} (H=${highs.get('15m', 0):.2f} L=${lows.get('15m', 0):.2f}) | "
-                          f"Volume: {volume_weight:.2f}x | HasVol: {has_volume}")
+                # Debug: Log all conditions for trade decision with distances
+                dist_to_low_1h = ((current_price - low_1h_val) / low_1h_val * 100) if low_1h_val > 0 else 999
+                dist_to_low_30m = ((current_price - low_30m_val) / low_30m_val * 100) if low_30m_val > 0 else 999
+                dist_to_low_15m = ((current_price - low_15m_val) / low_15m_val * 100) if low_15m_val > 0 else 999
+                dist_to_high_1h = ((high_1h_val - current_price) / high_1h_val * 100) if high_1h_val > 0 else 999
+                dist_to_high_30m = ((high_30m_val - current_price) / high_30m_val * 100) if high_30m_val > 0 else 999
+                dist_to_high_15m = ((high_15m_val - current_price) / high_15m_val * 100) if high_15m_val > 0 else 999
+                
+                logger.info(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
+                          f"1h: Near H/L={near_high_1h}/{near_low_1h} (H=${high_1h_val:.2f} L=${low_1h_val:.2f} | Dist: {dist_to_high_1h:+.2f}%/{dist_to_low_1h:+.2f}%) | "
+                          f"30m: Near H/L={near_high_30m}/{near_low_30m} (H=${high_30m_val:.2f} L=${low_30m_val:.2f} | Dist: {dist_to_high_30m:+.2f}%/{dist_to_low_30m:+.2f}%) | "
+                          f"15m: Near H/L={near_high_15m}/{near_low_15m} (H=${high_15m_val:.2f} L=${low_15m_val:.2f} | Dist: {dist_to_high_15m:+.2f}%/{dist_to_low_15m:+.2f}%) | "
+                          f"Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
                 # DIP-BUYING STRATEGY: Prioritize lows (support) first, then highs (breakouts)
                 # All entries REQUIRE volume - no exceptions

@@ -344,27 +344,28 @@ class BotInstance:
                 current_price = self.last_prices[pair]
                 
                 # Get timeframe highs and lows from API candles (cached 60s)
-                timeframes = ['5m', '15m', '30m']
+                # Focus on 15m/30m/1h for better support levels (removed 5m - too spammy/risky)
+                timeframes = ['15m', '30m', '1h']
                 highs = {}
                 lows = {}
                 volumes = {}
                 
                 for tf in timeframes:
                     try:
-                        # Get candles for timeframe - use proper interval, not just 1m
+                        # Get candles for timeframe - use proper interval
                         end_time = int(datetime.now().timestamp() * 1000)
-                        if tf == '5m':
-                            # For 5m: get last 20 candles (100 minutes) to ensure we have enough data
-                            start_time = end_time - (20 * 5 * 60 * 1000)
-                            interval = '5m'  # Use 5m candles, not 1m!
-                        elif tf == '15m':
+                        if tf == '15m':
                             # For 15m: get last 20 candles (300 minutes = 5 hours)
                             start_time = end_time - (20 * 15 * 60 * 1000)
-                            interval = '15m'  # Use 15m candles, not 1m!
-                        else:  # 30m
+                            interval = '15m'
+                        elif tf == '30m':
                             # For 30m: get last 20 candles (600 minutes = 10 hours)
                             start_time = end_time - (20 * 30 * 60 * 1000)
-                            interval = '30m'  # Use 30m candles, not 1m!
+                            interval = '30m'
+                        else:  # 1h
+                            # For 1h: get last 20 candles (1200 minutes = 20 hours)
+                            start_time = end_time - (20 * 60 * 60 * 1000)
+                            interval = '1h'
                         
                         candles = await self.get_candles_cached(pair, interval, start_time, end_time)
                         
@@ -412,21 +413,21 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # DEAD SIMPLE - Is price touching the high or low?
-                # Allow 0.5% wiggle room to count as "touching"
-                wiggle = 0.005  # 0.5%
+                # DIP-BUYING STRATEGY: Tighter wiggle for lows (support), wider for highs (breakouts)
+                wiggle_low = 0.003  # 0.3% - tighter for precise support entries
+                wiggle_high = 0.007  # 0.7% - wider, only enter strong breakouts
                 
-                # Near highs? (price within 0.5% of high - FIXED: use absolute distance)
-                near_high_30m = abs(current_price - highs['30m']) / highs['30m'] <= wiggle if highs['30m'] > 0 else False
-                near_high_15m = abs(current_price - highs['15m']) / highs['15m'] <= wiggle if highs['15m'] > 0 else False
-                near_high_5m = abs(current_price - highs['5m']) / highs['5m'] <= wiggle if highs['5m'] > 0 else False
+                # Near highs? (price within 0.7% of high - only strong breakouts)
+                near_high_1h = abs(current_price - highs['1h']) / highs['1h'] <= wiggle_high if highs.get('1h', 0) > 0 else False
+                near_high_30m = abs(current_price - highs['30m']) / highs['30m'] <= wiggle_high if highs.get('30m', 0) > 0 else False
+                near_high_15m = abs(current_price - highs['15m']) / highs['15m'] <= wiggle_high if highs.get('15m', 0) > 0 else False
                 
-                # Near lows? (price within 0.5% of low - FIXED: use absolute distance)
-                near_low_30m = abs(current_price - lows['30m']) / lows['30m'] <= wiggle if lows['30m'] > 0 else False
-                near_low_15m = abs(current_price - lows['15m']) / lows['15m'] <= wiggle if lows['15m'] > 0 else False
-                near_low_5m = abs(current_price - lows['5m']) / lows['5m'] <= wiggle if lows['5m'] > 0 else False
+                # Near lows? (price within 0.3% of low - precise support entries)
+                near_low_1h = abs(current_price - lows['1h']) / lows['1h'] <= wiggle_low if lows.get('1h', 0) > 0 else False
+                near_low_30m = abs(current_price - lows['30m']) / lows['30m'] <= wiggle_low if lows.get('30m', 0) > 0 else False
+                near_low_15m = abs(current_price - lows['15m']) / lows['15m'] <= wiggle_low if lows.get('15m', 0) > 0 else False
                 
-                # Has volume?
+                # REQUIRE volume for ALL entries (no exceptions - volume confirms the move)
                 has_volume = volume_weight > 0.5
                 
                 # Update market metrics log in place (every 30 seconds) - persists and updates automatically
@@ -434,35 +435,35 @@ class BotInstance:
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     # Calculate how close we are to triggers for ALL timeframes
-                    high_5m_distance = ((current_price / highs['5m']) - 1) * 100
-                    low_5m_distance = ((lows['5m'] / current_price) - 1) * 100
-                    high_15m_distance = ((current_price / highs['15m']) - 1) * 100
-                    low_15m_distance = ((lows['15m'] / current_price) - 1) * 100
-                    high_30m_distance = ((current_price / highs['30m']) - 1) * 100
-                    low_30m_distance = ((lows['30m'] / current_price) - 1) * 100
+                    high_1h_distance = ((current_price / highs.get('1h', current_price)) - 1) * 100
+                    low_1h_distance = ((lows.get('1h', current_price) / current_price) - 1) * 100
+                    high_30m_distance = ((current_price / highs.get('30m', current_price)) - 1) * 100
+                    low_30m_distance = ((lows.get('30m', current_price) / current_price) - 1) * 100
+                    high_15m_distance = ((current_price / highs.get('15m', current_price)) - 1) * 100
+                    low_15m_distance = ((lows.get('15m', current_price) / current_price) - 1) * 100
                     
-                    message = f"{pair} | ${current_price:.2f} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_distance:+.3f}%/{low_5m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
+                    message = f"{pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
                     data = {
                         'pair': pair,
                         'current_price': current_price,
-                        'highs_30m': highs['30m'],
-                        'lows_30m': lows['30m'],
-                        'highs_15m': highs['15m'],
-                        'lows_15m': lows['15m'],
-                        'highs_5m': highs['5m'],
-                        'lows_5m': lows['5m'],
+                        'highs_1h': highs.get('1h', 0),
+                        'lows_1h': lows.get('1h', 0),
+                        'highs_30m': highs.get('30m', 0),
+                        'lows_30m': lows.get('30m', 0),
+                        'highs_15m': highs.get('15m', 0),
+                        'lows_15m': lows.get('15m', 0),
+                        'distance_to_high_1h': high_1h_distance,
+                        'distance_to_low_1h': low_1h_distance,
                         'distance_to_high_30m': high_30m_distance,
                         'distance_to_low_30m': low_30m_distance,
                         'distance_to_high_15m': high_15m_distance,
                         'distance_to_low_15m': low_15m_distance,
-                        'distance_to_high_5m': high_5m_distance,
-                        'distance_to_low_5m': low_5m_distance,
                         'volume_weight': volume_weight,
                         'has_volume': has_volume,
-                        'near_high_5m': near_high_5m,
+                        'near_high_1h': near_high_1h,
                         'near_high_15m': near_high_15m,
                         'near_high_30m': near_high_30m,
-                        'near_low_5m': near_low_5m,
+                        'near_low_1h': near_low_1h,
                         'near_low_15m': near_low_15m,
                         'near_low_30m': near_low_30m,
                         'has_open_position': has_open_position,
@@ -479,31 +480,31 @@ class BotInstance:
                     last_monitor_update = self.last_position_update_time.get(pair, 0)
                     
                     if current_time_monitor - last_monitor_update >= 5:  # Update every 5 seconds
-                        # Calculate distances to entry levels
-                        high_5m_dist = ((highs['5m'] - current_price) / current_price * 100) if highs['5m'] > 0 else 0
-                        low_5m_dist = ((current_price - lows['5m']) / current_price * 100) if lows['5m'] > 0 else 0
-                        high_15m_dist = ((highs['15m'] - current_price) / current_price * 100) if highs['15m'] > 0 else 0
-                        low_15m_dist = ((current_price - lows['15m']) / current_price * 100) if lows['15m'] > 0 else 0
-                        high_30m_dist = ((highs['30m'] - current_price) / current_price * 100) if highs['30m'] > 0 else 0
-                        low_30m_dist = ((current_price - lows['30m']) / current_price * 100) if lows['30m'] > 0 else 0
+                        # Calculate distances to entry levels (1h/30m/15m only)
+                        high_1h_dist = ((highs.get('1h', 0) - current_price) / current_price * 100) if highs.get('1h', 0) > 0 else 0
+                        low_1h_dist = ((current_price - lows.get('1h', 0)) / current_price * 100) if lows.get('1h', 0) > 0 else 0
+                        high_30m_dist = ((highs.get('30m', 0) - current_price) / current_price * 100) if highs.get('30m', 0) > 0 else 0
+                        low_30m_dist = ((current_price - lows.get('30m', 0)) / current_price * 100) if lows.get('30m', 0) > 0 else 0
+                        high_15m_dist = ((highs.get('15m', 0) - current_price) / current_price * 100) if highs.get('15m', 0) > 0 else 0
+                        low_15m_dist = ((current_price - lows.get('15m', 0)) / current_price * 100) if lows.get('15m', 0) > 0 else 0
                         
-                        # Determine nearest entry level
+                        # Determine nearest entry level (prioritize lows)
                         nearest_level = "Monitoring..."
-                        if near_high_30m or near_high_15m or near_high_5m:
-                            nearest_level = "Near HIGH - Potential LONG entry"
-                        elif near_low_30m or near_low_15m or near_low_5m:
-                            nearest_level = "Near LOW - Potential LONG entry"
+                        if near_low_1h or near_low_30m or near_low_15m:
+                            nearest_level = "Near LOW (Support) - Potential LONG entry"
+                        elif near_high_1h or near_high_30m or near_high_15m:
+                            nearest_level = "Near HIGH (Breakout) - Potential LONG entry"
                         
-                        message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 30m: ${highs['30m']:.2f}/{lows['30m']:.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs['15m']:.2f}/{lows['15m']:.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | 5m: ${highs['5m']:.2f}/${lows['5m']:.2f} ({high_5m_dist:+.2f}%/{low_5m_dist:+.2f}%) | Vol: {volume_weight:.2f}x"
+                        message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_dist:+.2f}%/{low_1h_dist:+.2f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | Vol: {volume_weight:.2f}x"
                         data = {
                             'pair': pair,
                             'current_price': current_price,
-                            'highs_30m': highs['30m'],
-                            'lows_30m': lows['30m'],
-                            'highs_15m': highs['15m'],
-                            'lows_15m': lows['15m'],
-                            'highs_5m': highs['5m'],
-                            'lows_5m': lows['5m'],
+                            'highs_1h': highs.get('1h', 0),
+                            'lows_1h': lows.get('1h', 0),
+                            'highs_30m': highs.get('30m', 0),
+                            'lows_30m': lows.get('30m', 0),
+                            'highs_15m': highs.get('15m', 0),
+                            'lows_15m': lows.get('15m', 0),
                             'volume_weight': volume_weight,
                             'update_type': 'monitoring'
                         }
@@ -528,28 +529,32 @@ class BotInstance:
                 
                 # Debug: Log all conditions for trade decision
                 logger.debug(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
-                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} (H=${highs['30m']:.2f} L=${lows['30m']:.2f}) | "
-                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} (H=${highs['15m']:.2f} L=${lows['15m']:.2f}) | "
-                          f"Near 5m H/L: {near_high_5m}/{near_low_5m} (H=${highs['5m']:.2f} L=${lows['5m']:.2f}) | "
+                          f"Near 1h H/L: {near_high_1h}/{near_low_1h} (H=${highs.get('1h', 0):.2f} L=${lows.get('1h', 0):.2f}) | "
+                          f"Near 30m H/L: {near_high_30m}/{near_low_30m} (H=${highs.get('30m', 0):.2f} L=${lows.get('30m', 0):.2f}) | "
+                          f"Near 15m H/L: {near_high_15m}/{near_low_15m} (H=${highs.get('15m', 0):.2f} L=${lows.get('15m', 0):.2f}) | "
                           f"Volume: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
-                # Near 30m high with volume
-                if near_high_30m and has_volume:
-                    reason = f"Near 30m high ${highs['30m']:.2f} with volume"
-                # Near 30m low with volume
+                # DIP-BUYING STRATEGY: Prioritize lows (support) first, then highs (breakouts)
+                # All entries REQUIRE volume - no exceptions
+                
+                # Priority 1: 1h low (strongest support)
+                if near_low_1h and has_volume:
+                    reason = f"Buy dip at 1h low ${lows.get('1h', 0):.2f} with volume"
+                # Priority 2: 30m low (good support)
                 elif near_low_30m and has_volume:
-                    reason = f"Buy dip at 30m low ${lows['30m']:.2f} with volume"
-                # Near 15m high with volume
-                elif near_high_15m and has_volume:
-                    reason = f"Near 15m high ${highs['15m']:.2f} with volume"
-                # Near 15m low with volume
+                    reason = f"Buy dip at 30m low ${lows.get('30m', 0):.2f} with volume"
+                # Priority 3: 15m low (quick bounce)
                 elif near_low_15m and has_volume:
-                    reason = f"Buy dip at 15m low ${lows['15m']:.2f} with volume"
-                # Near 5m high OR low (no volume needed for 5m)
-                elif near_high_5m:
-                    reason = f"Near 5m high ${highs['5m']:.2f}"
-                elif near_low_5m:
-                    reason = f"Buy dip at 5m low ${lows['5m']:.2f}"
+                    reason = f"Buy dip at 15m low ${lows.get('15m', 0):.2f} with volume"
+                # Priority 4: 1h high (strong breakout only)
+                elif near_high_1h and has_volume:
+                    reason = f"Strong breakout at 1h high ${highs.get('1h', 0):.2f} with volume"
+                # Priority 5: 30m high (breakout)
+                elif near_high_30m and has_volume:
+                    reason = f"Breakout at 30m high ${highs.get('30m', 0):.2f} with volume"
+                # Priority 6: 15m high (weaker breakout)
+                elif near_high_15m and has_volume:
+                    reason = f"Breakout at 15m high ${highs.get('15m', 0):.2f} with volume"
                 
                 if reason:
                     logger.info(f"✅ {pair} TRADE SIGNAL TRIGGERED: {reason}")
@@ -606,9 +611,9 @@ class BotInstance:
     async def calculate_volume_weight(self, pair: str, timeframe_volumes: dict) -> float:
         """Calculate volume weight for multi-timeframe strategy"""
         try:
-            # Use 5m volume as baseline
-            current_volume = timeframe_volumes.get('5m', 0)
-            baseline_volume = timeframe_volumes.get('15m', current_volume)
+            # Use 15m volume as baseline (since we removed 5m)
+            current_volume = timeframe_volumes.get('15m', 0)
+            baseline_volume = timeframe_volumes.get('30m', timeframe_volumes.get('1h', current_volume))
             
             if baseline_volume == 0:
                 return 1.0

@@ -485,12 +485,12 @@ class BotInstance:
                             'distance_to_low_15m': low_15m_distance,
                             'volume_weight': volume_weight,
                             'has_volume': has_volume,
-                            'near_high_1h': near_high_1h,
-                            'near_high_15m': near_high_15m,
-                            'near_high_30m': near_high_30m,
-                            'near_low_1h': near_low_1h,
-                            'near_low_15m': near_low_15m,
-                            'near_low_30m': near_low_30m,
+                        'near_high_1h': False,  # Highs disabled - dip-buying only
+                        'near_high_15m': False,  # Highs disabled - dip-buying only
+                        'near_high_30m': False,  # Highs disabled - dip-buying only
+                        'near_low_1h': near_low_1h,
+                        'near_low_15m': near_low_15m,
+                        'near_low_30m': near_low_30m,
                             'has_open_position': has_open_position,
                             'update_type': 'market_metrics'
                         }
@@ -518,12 +518,11 @@ class BotInstance:
                         high_15m_dist = ((highs.get('15m', 0) - current_price) / current_price * 100) if highs.get('15m', 0) > 0 else 0
                         low_15m_dist = ((current_price - lows.get('15m', 0)) / current_price * 100) if lows.get('15m', 0) > 0 else 0
                         
-                        # Determine nearest entry level (prioritize lows)
-                        nearest_level = "Monitoring..."
+                        # Determine nearest entry level (LOWS ONLY - no high breakouts)
+                        nearest_level = "Monitoring for dip-buy opportunities..."
                         if near_low_1h or near_low_30m or near_low_15m:
                             nearest_level = "Near LOW (Support) - Potential LONG entry"
-                        elif near_high_1h or near_high_30m or near_high_15m:
-                            nearest_level = "Near HIGH (Breakout) - Potential LONG entry"
+                        # High breakouts disabled - too high risk
                         
                         message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_dist:+.2f}%/{low_1h_dist:+.2f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | Vol: {volume_weight:.2f}x"
                         data = {
@@ -557,21 +556,19 @@ class BotInstance:
                 # SIMPLE LOGIC - Near high/low + volume = TRADE
                 reason = ""
                 
-                # Debug: Log all conditions for trade decision with distances
+                # Debug: Log all conditions for trade decision with distances (LOWS ONLY - no high breakouts)
                 dist_to_low_1h = ((current_price - low_1h_val) / low_1h_val * 100) if low_1h_val > 0 else 999
                 dist_to_low_30m = ((current_price - low_30m_val) / low_30m_val * 100) if low_30m_val > 0 else 999
                 dist_to_low_15m = ((current_price - low_15m_val) / low_15m_val * 100) if low_15m_val > 0 else 999
-                dist_to_high_1h = ((high_1h_val - current_price) / high_1h_val * 100) if high_1h_val > 0 else 999
-                dist_to_high_30m = ((high_30m_val - current_price) / high_30m_val * 100) if high_30m_val > 0 else 999
-                dist_to_high_15m = ((high_15m_val - current_price) / high_15m_val * 100) if high_15m_val > 0 else 999
                 
-                logger.info(f"🔍 {pair} TRADE CHECK | Price: ${current_price:.2f} | "
-                          f"1h: Near H/L={near_high_1h}/{near_low_1h} (H=${high_1h_val:.2f} L=${low_1h_val:.2f} | Dist: {dist_to_high_1h:+.2f}%/{dist_to_low_1h:+.2f}%) | "
-                          f"30m: Near H/L={near_high_30m}/{near_low_30m} (H=${high_30m_val:.2f} L=${low_30m_val:.2f} | Dist: {dist_to_high_30m:+.2f}%/{dist_to_low_30m:+.2f}%) | "
-                          f"15m: Near H/L={near_high_15m}/{near_low_15m} (H=${high_15m_val:.2f} L=${low_15m_val:.2f} | Dist: {dist_to_high_15m:+.2f}%/{dist_to_low_15m:+.2f}%) | "
+                logger.info(f"🔍 {pair} DIP-BUY CHECK | Price: ${current_price:.2f} | "
+                          f"1h Low: Near={near_low_1h} (L=${low_1h_val:.2f} | Dist: {dist_to_low_1h:+.2f}%) | "
+                          f"30m Low: Near={near_low_30m} (L=${low_30m_val:.2f} | Dist: {dist_to_low_30m:+.2f}%) | "
+                          f"15m Low: Near={near_low_15m} (L=${low_15m_val:.2f} | Dist: {dist_to_low_15m:+.2f}%) | "
                           f"Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
-                # DIP-BUYING STRATEGY: Prioritize lows (support) first, then highs (breakouts)
+                # STRICT DIP-BUYING STRATEGY: ONLY trade lows (support levels)
+                # NO high breakouts - too high risk
                 # All entries REQUIRE volume - no exceptions
                 
                 # Priority 1: 1h low (strongest support)
@@ -583,15 +580,7 @@ class BotInstance:
                 # Priority 3: 15m low (quick bounce)
                 elif near_low_15m and has_volume:
                     reason = f"Buy dip at 15m low ${lows.get('15m', 0):.2f} with volume"
-                # Priority 4: 1h high (strong breakout only)
-                elif near_high_1h and has_volume:
-                    reason = f"Strong breakout at 1h high ${highs.get('1h', 0):.2f} with volume"
-                # Priority 5: 30m high (breakout)
-                elif near_high_30m and has_volume:
-                    reason = f"Breakout at 30m high ${highs.get('30m', 0):.2f} with volume"
-                # Priority 6: 15m high (weaker breakout)
-                elif near_high_15m and has_volume:
-                    reason = f"Breakout at 15m high ${highs.get('15m', 0):.2f} with volume"
+                # NO HIGH BREAKOUTS - removed for risk management
                 
                 if reason:
                     logger.info(f"✅ {pair} TRADE SIGNAL TRIGGERED: {reason}")

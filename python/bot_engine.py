@@ -141,6 +141,7 @@ class BotInstance:
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
         self.last_analysis_log_time: float = 0  # Track last detailed analysis log
+        self.last_market_metrics_log_time: float = 0  # Separate timer for market metrics (per pair)
         self.market_log_interval = 30  # Log market data every 30 seconds
         self.position_log_ids: Dict[str, str] = {}  # Track position status log IDs per pair (for updating in place)
         self.monitoring_log_ids: Dict[str, str] = {}  # Track monitoring log IDs per pair (for updating in place)
@@ -438,10 +439,16 @@ class BotInstance:
                 # REQUIRE volume for ALL entries (no exceptions - volume confirms the move)
                 has_volume = volume_weight > 0.5
                 
-                # Update market metrics log in place (every 30 seconds) - persists and updates automatically
+                # ALWAYS log market metrics (every 30 seconds) - persists and updates automatically
                 # This logs even when we have an open position so we can monitor levels
+                # Use separate timer to ensure market metrics don't conflict with other logs
                 current_time = datetime.now().timestamp()
-                if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                last_metrics_time = getattr(self, 'last_market_metrics_log_time', 0)
+                # Log immediately on first run (last_metrics_time == 0) or every 30 seconds
+                should_log_metrics = (last_metrics_time == 0) or (current_time - last_metrics_time >= self.market_log_interval)
+                
+                # Always log market metrics - this is critical for monitoring
+                if should_log_metrics:
                     try:
                         # Calculate how close we are to triggers for ALL timeframes
                         # Handle division by zero safely
@@ -459,7 +466,8 @@ class BotInstance:
                         high_15m_distance = ((current_price / high_15m_val_safe) - 1) * 100 if high_15m_val_safe > 0 else 0
                         low_15m_distance = ((low_15m_val_safe / current_price) - 1) * 100 if current_price > 0 else 0
                         
-                        message = f"{pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
+                        # Format market metrics message with all timeframe data
+                        message = f"📊 {pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
                         data = {
                             'pair': pair,
                             'current_price': current_price,
@@ -489,11 +497,12 @@ class BotInstance:
                         
                         # Use log_update to update in place instead of creating new log entries
                         await self.log_update('market_metrics', pair, message, data)
-                        self.last_analysis_log_time = current_time  # UPDATE the timer after logging!
+                        self.last_market_metrics_log_time = current_time  # UPDATE the timer after logging!
+                        logger.debug(f"✅ Market metrics logged for {pair}")
                     except Exception as e:
                         logger.error(f"❌ Failed to log market metrics for {pair}: {e}", exc_info=True)
                         # Still update timer so we don't spam errors
-                        self.last_analysis_log_time = current_time
+                        self.last_market_metrics_log_time = current_time
                 
                 # Update monitoring log when no position is open (every 5 seconds)
                 if not has_open_position:

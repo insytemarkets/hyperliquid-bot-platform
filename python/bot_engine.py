@@ -378,15 +378,15 @@ class BotInstance:
                         candles = await self.get_candles_cached(pair, interval, start_time, end_time)
                         
                         if candles and len(candles) > 0:
-                            # CRITICAL: Use only CLOSED candles (exclude the last/current incomplete candle)
-                            # The last candle in the array is the current incomplete one, so we exclude it
+                            # CRITICAL: Use only the PREVIOUS closed candle (exclude the current incomplete candle)
+                            # The last candle in the array is the current incomplete one, so we use the second-to-last
                             closed_candles = candles[:-1] if len(candles) > 1 else candles
                             
                             if len(closed_candles) > 0:
-                                # Use the MINIMUM LOW and MAXIMUM HIGH across ALL closed candles in this timeframe
-                                # This gives us the true support/resistance levels for the timeframe period
-                                tf_high = max(float(c['h']) for c in closed_candles)
-                                tf_low = min(float(c['l']) for c in closed_candles)
+                                # Use the PREVIOUS closed candle's high/low (most recent completed candle)
+                                last_closed_candle = closed_candles[-1]
+                                tf_high = float(last_closed_candle['h'])
+                                tf_low = float(last_closed_candle['l'])
                                 
                                 # Average volume from closed candles
                                 tf_volume = sum(float(c['v']) for c in closed_candles) / len(closed_candles)
@@ -395,7 +395,7 @@ class BotInstance:
                                 lows[tf] = tf_low
                                 volumes[tf] = tf_volume
                                 
-                                logger.debug(f"{pair} {tf}: H={tf_high:.2f} L={tf_low:.2f} (from {len(closed_candles)} closed candles, min/max across all)")
+                                logger.debug(f"{pair} {tf}: Previous candle H={tf_high:.2f} L={tf_low:.2f}")
                             else:
                                 # No closed candles yet - use current price as fallback
                                 logger.warning(f"No closed candles for {pair} {tf}, using current price")

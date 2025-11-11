@@ -152,6 +152,13 @@ class BotInstance:
         self.market_data_cache_ttl = 2  # Cache market data for 2 seconds
         self.last_position_close_time: Dict[str, float] = {}  # Track when positions were closed (cooldown period)
         self.position_cooldown = 60  # Wait 60 seconds after closing before opening new position on same pair
+        self.position_metadata: Dict[str, dict] = {}  # Track per-position metadata for risk management
+        # Metadata structure: {
+        #   'highest_profit_pct': float,  # Peak profit percentage reached
+        #   'highest_profit_price': float,  # Price at peak profit
+        #   'first_profit_time': float or None,  # Timestamp when position first entered profit
+        #   'original_stop_loss': float  # Initial stop loss (for break-even reference)
+        # }
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -866,6 +873,15 @@ class BotInstance:
             })
             logger.info(f"✅ Updated positions list: {len(self.positions)} positions")
             
+            # Initialize position metadata for risk management
+            self.position_metadata[position_id] = {
+                'highest_profit_pct': 0.0,
+                'highest_profit_price': price,
+                'first_profit_time': None,
+                'original_stop_loss': stop_loss
+            }
+            logger.debug(f"📊 Initialized metadata for position {position_id}")
+            
             # Delete monitoring log since we now have a position
             if pair in self.monitoring_log_ids:
                 try:
@@ -898,8 +914,22 @@ class BotInstance:
                 .execute()
             
             if result.data:
+                # Preserve metadata for existing positions
+                old_positions = {p['id']: p for p in self.positions}
                 # Update self.positions with fresh data from database
                 self.positions = result.data
+                # Initialize metadata for any new positions that don't have it
+                for pos in self.positions:
+                    pos_id = pos['id']
+                    if pos_id not in self.position_metadata:
+                        # New position from database - initialize metadata
+                        self.position_metadata[pos_id] = {
+                            'highest_profit_pct': 0.0,
+                            'highest_profit_price': pos.get('entry_price', 0),
+                            'first_profit_time': None,
+                            'original_stop_loss': pos.get('stop_loss', 0)
+                        }
+                        logger.debug(f"📊 Initialized metadata for existing position {pos_id}")
         except Exception as e:
             logger.warning(f"Failed to refresh positions from database: {e}")
             # Continue with existing self.positions if refresh fails
@@ -956,38 +986,149 @@ class BotInstance:
                 await self.log_update('position_status', pair, message, data)
                 self.last_position_update_time[pair] = current_time
             
-            # Check exit conditions
-            should_close = False
-            reason = ''
+            # Get or initialize position metadata
+            position_id = position['id']
+            if position_id not in self.position_metadata:
+                self.position_metadata[position_id] = {
+                    'highest_profit_pct': 0.0,
+                    'highest_profit_price': entry_price,
+                    'first_profit_time': None,
+                    'original_stop_loss': position.get('stop_loss', 0)
+                }
             
-            # Get stop_loss and take_profit, handle None values
+            metadata = self.position_metadata[position_id]
+            
+            # Update highest profit tracking
+            if pnl_pct > metadata['highest_profit_pct']:
+                metadata['highest_profit_pct'] = pnl_pct
+                metadata['highest_profit_price'] = current_price
+                logger.debug(f"📈 {pair} new peak profit: {pnl_pct:+.2f}% @ ${current_price:.2f}")
+            
+            # Track when position first enters profit
+            if pnl_pct > 0 and metadata['first_profit_time'] is None:
+                metadata['first_profit_time'] = current_time
+                logger.debug(f"💰 {pair} entered profit for first time")
+            
+            # Calculate time in profit (in minutes)
+            time_in_profit = 0
+            if metadata['first_profit_time'] is not None and pnl_pct > 0:
+                time_in_profit = (current_time - metadata['first_profit_time']) / 60
+            
+            # Get current stop_loss and take_profit
             stop_loss = position.get('stop_loss')
             take_profit = position.get('take_profit')
             
-            # Log current status for debugging
-            if side == 'long':
-                distance_to_tp = ((take_profit - current_price) / current_price * 100) if take_profit else None
-                distance_to_sl = ((current_price - stop_loss) / current_price * 100) if stop_loss else None
-                logger.debug(f"🔍 {pair} LONG | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
-                
-                if stop_loss and current_price <= stop_loss:
-                    should_close = True
-                    reason = 'Stop Loss'
-                elif take_profit and current_price >= take_profit:
-                    should_close = True
-                    reason = 'Take Profit'
-            else:  # short
-                distance_to_tp = ((current_price - take_profit) / current_price * 100) if take_profit else None
-                distance_to_sl = ((stop_loss - current_price) / current_price * 100) if stop_loss else None
-                logger.debug(f"🔍 {pair} SHORT | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
-                
-                if stop_loss and current_price >= stop_loss:
-                    should_close = True
-                    reason = 'Stop Loss'
-                elif take_profit and current_price <= take_profit:
-                    should_close = True
-                    reason = 'Take Profit'
+            # Apply risk management rules in order
             
+            # Rule 1: Break-even Protection
+            # Move SL to entry_price when profit >= 0.15%
+            if side == 'long' and pnl_pct >= 0.15 and stop_loss and stop_loss < entry_price:
+                new_sl = entry_price
+                if abs(new_sl - stop_loss) > 0.0001:  # Only update if significantly different
+                    try:
+                        supabase.table('bot_positions')\
+                            .update({'stop_loss': new_sl})\
+                            .eq('id', position_id)\
+                            .execute()
+                        position['stop_loss'] = new_sl  # Update local copy
+                        stop_loss = new_sl
+                        logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
+            elif side == 'short' and pnl_pct >= 0.15 and stop_loss and stop_loss > entry_price:
+                new_sl = entry_price
+                if abs(new_sl - stop_loss) > 0.0001:
+                    try:
+                        supabase.table('bot_positions')\
+                            .update({'stop_loss': new_sl})\
+                            .eq('id', position_id)\
+                            .execute()
+                        position['stop_loss'] = new_sl
+                        stop_loss = new_sl
+                        logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
+            
+            # Rule 2: Trailing Stop Loss
+            # Start trailing at +0.2% profit, trail at 50% of peak profit
+            if pnl_pct >= 0.2 and metadata['highest_profit_pct'] > 0:
+                trailing_sl_pct = metadata['highest_profit_pct'] * 0.5  # 50% of peak
+                if side == 'long':
+                    new_sl = entry_price * (1 + trailing_sl_pct / 100)
+                    # Only update if new_sl > current stop_loss (only move up, never down)
+                    if stop_loss and new_sl > stop_loss:
+                        try:
+                            supabase.table('bot_positions')\
+                                .update({'stop_loss': new_sl})\
+                                .eq('id', position_id)\
+                                .execute()
+                            position['stop_loss'] = new_sl
+                            stop_loss = new_sl
+                            logger.info(f"📈 {pair} Trailing SL: Updated to ${new_sl:.2f} ({trailing_sl_pct:.2f}% from entry)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to update trailing SL for {pair}: {e}")
+                else:  # short
+                    new_sl = entry_price * (1 - trailing_sl_pct / 100)
+                    # Only update if new_sl < current stop_loss (only move down, never up for shorts)
+                    if stop_loss and new_sl < stop_loss:
+                        try:
+                            supabase.table('bot_positions')\
+                                .update({'stop_loss': new_sl})\
+                                .eq('id', position_id)\
+                                .execute()
+                            position['stop_loss'] = new_sl
+                            stop_loss = new_sl
+                            logger.info(f"📈 {pair} Trailing SL: Updated to ${new_sl:.2f} ({trailing_sl_pct:.2f}% from entry)")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to update trailing SL for {pair}: {e}")
+            
+            # Rule 3: Time-based Profit Taking
+            should_close = False
+            reason = ''
+            
+            if time_in_profit >= 10 and pnl_pct >= 0.3:
+                should_close = True
+                reason = 'Time-based Profit'
+                logger.info(f"⏰ {pair} Time-based exit: {time_in_profit:.1f} min in profit @ {pnl_pct:+.2f}%")
+            elif time_in_profit >= 20 and pnl_pct >= 0.2:
+                should_close = True
+                reason = 'Time-based Profit'
+                logger.info(f"⏰ {pair} Time-based exit: {time_in_profit:.1f} min in profit @ {pnl_pct:+.2f}%")
+            
+            # Rule 4: Momentum-based Exit
+            # Exit if profit drops 50% from peak (only if still in profit)
+            if not should_close and metadata['highest_profit_pct'] > 0 and pnl_pct > 0:
+                if pnl_pct < (metadata['highest_profit_pct'] * 0.5):
+                    should_close = True
+                    reason = 'Momentum Reversal'
+                    logger.info(f"📉 {pair} Momentum reversal: Profit dropped from {metadata['highest_profit_pct']:+.2f}% to {pnl_pct:+.2f}%")
+            
+            # Rule 5: Standard TP/SL Checks (existing logic)
+            if not should_close:
+                if side == 'long':
+                    distance_to_tp = ((take_profit - current_price) / current_price * 100) if take_profit else None
+                    distance_to_sl = ((current_price - stop_loss) / current_price * 100) if stop_loss else None
+                    logger.debug(f"🔍 {pair} LONG | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                    
+                    if stop_loss and current_price <= stop_loss:
+                        should_close = True
+                        reason = 'Stop Loss'
+                    elif take_profit and current_price >= take_profit:
+                        should_close = True
+                        reason = 'Take Profit'
+                else:  # short
+                    distance_to_tp = ((current_price - take_profit) / current_price * 100) if take_profit else None
+                    distance_to_sl = ((stop_loss - current_price) / current_price * 100) if stop_loss else None
+                    logger.debug(f"🔍 {pair} SHORT | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                    
+                    if stop_loss and current_price >= stop_loss:
+                        should_close = True
+                        reason = 'Stop Loss'
+                    elif take_profit and current_price <= take_profit:
+                        should_close = True
+                        reason = 'Take Profit'
+            
+            # Close position if any exit condition is met
             if should_close:
                 logger.info(f"🎯 CLOSING {pair} {side.upper()} @ ${current_price:.2f} - {reason} | Entry: ${entry_price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)")
                 await self.close_position(position, current_price, reason)
@@ -1042,6 +1183,12 @@ class BotInstance:
             # CRITICAL: Remove from self.positions so we don't keep checking it
             self.positions = [p for p in self.positions if p['id'] != position['id']]
             logger.info(f"✅ Removed position from list. Remaining: {len(self.positions)}")
+            
+            # Clean up position metadata
+            position_id = position['id']
+            if position_id in self.position_metadata:
+                del self.position_metadata[position_id]
+                logger.debug(f"🧹 Cleaned up metadata for position {position_id}")
             
             # Delete the position status log (it will be replaced with monitoring log)
             pair = position['symbol']

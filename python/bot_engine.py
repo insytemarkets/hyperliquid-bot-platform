@@ -502,8 +502,30 @@ class BotInstance:
                         high_15m_distance = ((current_price / high_15m_val_safe) - 1) * 100 if high_15m_val_safe > 0 else 0
                         low_15m_distance = ((low_15m_val_safe / current_price) - 1) * 100 if current_price > 0 else 0
                         
+                        # Determine trend direction from last closed 1h candle
+                        trend_direction = "Neutral"
+                        try:
+                            if '1h' in highs and '1h' in lows:
+                                end_time_1h = int(datetime.now().timestamp() * 1000)
+                                start_time_1h = end_time_1h - (2 * 60 * 60 * 1000)
+                                candles_1h = await self.get_candles_cached(pair, '1h', start_time_1h, end_time_1h)
+                                
+                                if candles_1h and len(candles_1h) > 1:
+                                    last_closed_1h = candles_1h[-2] if len(candles_1h) > 1 else candles_1h[-1]
+                                    candle_close = float(last_closed_1h['c'])
+                                    candle_open = float(last_closed_1h['o'])
+                                    
+                                    if candle_close > candle_open:
+                                        trend_direction = "Bullish"
+                                    elif candle_close < candle_open:
+                                        trend_direction = "Bearish"
+                                    else:
+                                        trend_direction = "Neutral"
+                        except Exception as e:
+                            logger.debug(f"Failed to determine trend for {pair}: {e}")
+                        
                         # Format market metrics message with all timeframe data
-                        message = f"📊 {pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x"
+                        message = f"📊 {pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x | Trend: {trend_direction}"
                         data = {
                             'pair': pair,
                             'current_price': current_price,
@@ -560,7 +582,29 @@ class BotInstance:
                             nearest_level = "Near LOW (Support) - Potential LONG entry"
                         # High breakouts disabled - too high risk
                         
-                        message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_dist:+.2f}%/{low_1h_dist:+.2f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | Vol: {volume_weight:.2f}x"
+                        # Determine trend direction from last closed 1h candle
+                        trend_direction = "Neutral"
+                        try:
+                            if '1h' in highs and '1h' in lows:
+                                end_time_1h = int(datetime.now().timestamp() * 1000)
+                                start_time_1h = end_time_1h - (2 * 60 * 60 * 1000)
+                                candles_1h = await self.get_candles_cached(pair, '1h', start_time_1h, end_time_1h)
+                                
+                                if candles_1h and len(candles_1h) > 1:
+                                    last_closed_1h = candles_1h[-2] if len(candles_1h) > 1 else candles_1h[-1]
+                                    candle_close = float(last_closed_1h['c'])
+                                    candle_open = float(last_closed_1h['o'])
+                                    
+                                    if candle_close > candle_open:
+                                        trend_direction = "Bullish"
+                                    elif candle_close < candle_open:
+                                        trend_direction = "Bearish"
+                                    else:
+                                        trend_direction = "Neutral"
+                        except Exception as e:
+                            logger.debug(f"Failed to determine trend for {pair}: {e}")
+                        
+                        message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | {nearest_level} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_dist:+.2f}%/{low_1h_dist:+.2f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_dist:+.2f}%/{low_30m_dist:+.2f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_dist:+.2f}%/{low_15m_dist:+.2f}%) | Vol: {volume_weight:.2f}x | Trend: {trend_direction}"
                         data = {
                             'pair': pair,
                             'current_price': current_price,

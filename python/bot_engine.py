@@ -435,13 +435,15 @@ class BotInstance:
                 near_high_30m = abs(current_price - high_30m_val) / high_30m_val <= wiggle_high if high_30m_val > 0 else False
                 near_high_15m = abs(current_price - high_15m_val) / high_15m_val <= wiggle_high if high_15m_val > 0 else False
                 
-                # Near lows? (price within 0.3% of low - precise support entries)
+                # Near lows? Only buy when price is AT or BELOW the low (testing support from above)
+                # Don't buy when price is ABOVE the low (that means it already broke and is now resistance)
                 low_1h_val = lows.get('1h', 0)
                 low_30m_val = lows.get('30m', 0)
                 low_15m_val = lows.get('15m', 0)
-                near_low_1h = abs(current_price - low_1h_val) / low_1h_val <= wiggle_low if low_1h_val > 0 else False
-                near_low_30m = abs(current_price - low_30m_val) / low_30m_val <= wiggle_low if low_30m_val > 0 else False
-                near_low_15m = abs(current_price - low_15m_val) / low_15m_val <= wiggle_low if low_15m_val > 0 else False
+                # Price must be <= low (or very close below it) to test support, not above it
+                near_low_1h = (current_price <= low_1h_val and abs(current_price - low_1h_val) / low_1h_val <= wiggle_low) if low_1h_val > 0 else False
+                near_low_30m = (current_price <= low_30m_val and abs(current_price - low_30m_val) / low_30m_val <= wiggle_low) if low_30m_val > 0 else False
+                near_low_15m = (current_price <= low_15m_val and abs(current_price - low_15m_val) / low_15m_val <= wiggle_low) if low_15m_val > 0 else False
                 
                 # REQUIRE volume for ALL entries (no exceptions - volume confirms the move)
                 has_volume = volume_weight > 0.5

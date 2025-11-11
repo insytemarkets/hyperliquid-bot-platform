@@ -1020,10 +1020,8 @@ class BotInstance:
             stop_loss = position.get('stop_loss')
             take_profit = position.get('take_profit')
             
-            # Apply risk management rules in order
-            
-            # Rule 1: Break-even Protection
-            # Move SL to entry_price when profit >= 0.15%
+            # Apply risk management: Break-even protection only
+            # Move SL to entry_price when profit >= 0.15% to protect against losses
             if side == 'long' and pnl_pct >= 0.15 and stop_loss and stop_loss < entry_price:
                 new_sl = entry_price
                 if abs(new_sl - stop_loss) > 0.0001:  # Only update if significantly different
@@ -1051,84 +1049,32 @@ class BotInstance:
                     except Exception as e:
                         logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
             
-            # Rule 2: Trailing Stop Loss
-            # Start trailing at +0.2% profit, trail at 50% of peak profit
-            if pnl_pct >= 0.2 and metadata['highest_profit_pct'] > 0:
-                trailing_sl_pct = metadata['highest_profit_pct'] * 0.5  # 50% of peak
-                if side == 'long':
-                    new_sl = entry_price * (1 + trailing_sl_pct / 100)
-                    # Only update if new_sl > current stop_loss (only move up, never down)
-                    if stop_loss and new_sl > stop_loss:
-                        try:
-                            supabase.table('bot_positions')\
-                                .update({'stop_loss': new_sl})\
-                                .eq('id', position_id)\
-                                .execute()
-                            position['stop_loss'] = new_sl
-                            stop_loss = new_sl
-                            logger.info(f"📈 {pair} Trailing SL: Updated to ${new_sl:.2f} ({trailing_sl_pct:.2f}% from entry)")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to update trailing SL for {pair}: {e}")
-                else:  # short
-                    new_sl = entry_price * (1 - trailing_sl_pct / 100)
-                    # Only update if new_sl < current stop_loss (only move down, never up for shorts)
-                    if stop_loss and new_sl < stop_loss:
-                        try:
-                            supabase.table('bot_positions')\
-                                .update({'stop_loss': new_sl})\
-                                .eq('id', position_id)\
-                                .execute()
-                            position['stop_loss'] = new_sl
-                            stop_loss = new_sl
-                            logger.info(f"📈 {pair} Trailing SL: Updated to ${new_sl:.2f} ({trailing_sl_pct:.2f}% from entry)")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to update trailing SL for {pair}: {e}")
-            
-            # Rule 3: Time-based Profit Taking
+            # Standard TP/SL Checks (original logic - let winners run to TP)
             should_close = False
             reason = ''
             
-            if time_in_profit >= 10 and pnl_pct >= 0.3:
-                should_close = True
-                reason = 'Time-based Profit'
-                logger.info(f"⏰ {pair} Time-based exit: {time_in_profit:.1f} min in profit @ {pnl_pct:+.2f}%")
-            elif time_in_profit >= 20 and pnl_pct >= 0.2:
-                should_close = True
-                reason = 'Time-based Profit'
-                logger.info(f"⏰ {pair} Time-based exit: {time_in_profit:.1f} min in profit @ {pnl_pct:+.2f}%")
-            
-            # Rule 4: Momentum-based Exit
-            # Exit if profit drops 50% from peak (only if still in profit)
-            if not should_close and metadata['highest_profit_pct'] > 0 and pnl_pct > 0:
-                if pnl_pct < (metadata['highest_profit_pct'] * 0.5):
+            if side == 'long':
+                distance_to_tp = ((take_profit - current_price) / current_price * 100) if take_profit else None
+                distance_to_sl = ((current_price - stop_loss) / current_price * 100) if stop_loss else None
+                logger.debug(f"🔍 {pair} LONG | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                
+                if stop_loss and current_price <= stop_loss:
                     should_close = True
-                    reason = 'Momentum Reversal'
-                    logger.info(f"📉 {pair} Momentum reversal: Profit dropped from {metadata['highest_profit_pct']:+.2f}% to {pnl_pct:+.2f}%")
-            
-            # Rule 5: Standard TP/SL Checks (existing logic)
-            if not should_close:
-                if side == 'long':
-                    distance_to_tp = ((take_profit - current_price) / current_price * 100) if take_profit else None
-                    distance_to_sl = ((current_price - stop_loss) / current_price * 100) if stop_loss else None
-                    logger.debug(f"🔍 {pair} LONG | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
-                    
-                    if stop_loss and current_price <= stop_loss:
-                        should_close = True
-                        reason = 'Stop Loss'
-                    elif take_profit and current_price >= take_profit:
-                        should_close = True
-                        reason = 'Take Profit'
-                else:  # short
-                    distance_to_tp = ((current_price - take_profit) / current_price * 100) if take_profit else None
-                    distance_to_sl = ((stop_loss - current_price) / current_price * 100) if stop_loss else None
-                    logger.debug(f"🔍 {pair} SHORT | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
-                    
-                    if stop_loss and current_price >= stop_loss:
-                        should_close = True
-                        reason = 'Stop Loss'
-                    elif take_profit and current_price <= take_profit:
-                        should_close = True
-                        reason = 'Take Profit'
+                    reason = 'Stop Loss'
+                elif take_profit and current_price >= take_profit:
+                    should_close = True
+                    reason = 'Take Profit'
+            else:  # short
+                distance_to_tp = ((current_price - take_profit) / current_price * 100) if take_profit else None
+                distance_to_sl = ((stop_loss - current_price) / current_price * 100) if stop_loss else None
+                logger.debug(f"🔍 {pair} SHORT | Price: ${current_price:.2f} | TP: ${take_profit:.2f} ({distance_to_tp:+.2f}% away) | SL: ${stop_loss:.2f} ({distance_to_sl:+.2f}% away)")
+                
+                if stop_loss and current_price >= stop_loss:
+                    should_close = True
+                    reason = 'Stop Loss'
+                elif take_profit and current_price <= take_profit:
+                    should_close = True
+                    reason = 'Take Profit'
             
             # Close position if any exit condition is met
             if should_close:

@@ -415,11 +415,38 @@ class BotInstance:
                         lows[tf] = current_price
                         volumes[tf] = 0
                 
+                # DOWNTREND FILTER: Check if last closed 1h candle is bearish
+                # Skip trading during downtrends to avoid catching falling knives
+                is_downtrend = False
+                try:
+                    if '1h' in highs and '1h' in lows:
+                        # Get the last closed 1h candle to check trend
+                        end_time_1h = int(datetime.now().timestamp() * 1000)
+                        start_time_1h = end_time_1h - (2 * 60 * 60 * 1000)  # Last 2 hours (2 candles)
+                        candles_1h = await self.get_candles_cached(pair, '1h', start_time_1h, end_time_1h)
+                        
+                        if candles_1h and len(candles_1h) > 1:
+                            # Get the last CLOSED 1h candle (second-to-last in array)
+                            last_closed_1h = candles_1h[-2] if len(candles_1h) > 1 else candles_1h[-1]
+                            candle_close = float(last_closed_1h['c'])
+                            candle_open = float(last_closed_1h['o'])
+                            
+                            # If close < open, it's a bearish candle (downtrend)
+                            if candle_close < candle_open:
+                                is_downtrend = True
+                                logger.debug(f"📉 {pair} Downtrend detected: Last 1h candle bearish (O: ${candle_open:.2f} C: ${candle_close:.2f})")
+                except Exception as e:
+                    logger.warning(f"Failed to check downtrend for {pair}: {e}")
+                    # If we can't check, allow trading (fail-safe)
+                    is_downtrend = False
+                
                 # Calculate momentum score
                 momentum_score = await self.calculate_momentum_score(pair, current_price)
                 
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
+                
+                # Note: is_downtrend flag set above, will check after market metrics logging
                 
                 # DIP-BUYING STRATEGY: Very tight wiggle for precise support entries
                 # Only buy when price is very close to the low (within a few cents max)
@@ -549,6 +576,11 @@ class BotInstance:
                         
                         await self.log_update('monitoring', pair, message, data)
                         self.last_position_update_time[pair] = current_time_monitor
+                
+                # Skip trading if in downtrend (after logging market metrics)
+                if is_downtrend:
+                    logger.debug(f"⏸️ {pair} Skipping trade - Market in downtrend")
+                    continue  # Skip trading logic, but market metrics already logged above
                 
                 # Only check for new trades if we don't already have a position AND haven't reached max positions
                 if has_open_position or max_positions_reached:

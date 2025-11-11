@@ -421,10 +421,10 @@ class BotInstance:
                 # Calculate volume weight
                 volume_weight = await self.calculate_volume_weight(pair, volumes)
                 
-                # DIP-BUYING STRATEGY: Wider wiggle for lows to catch more support entries
-                # We prioritize lows, so give them more room to trigger
-                wiggle_low = 0.005  # 0.5% - wider to catch more dip opportunities
-                wiggle_high = 0.005  # 0.5% - same wiggle, but lows checked first
+                # DIP-BUYING STRATEGY: Very tight wiggle for precise support entries
+                # Only buy when price is very close to the low (within a few cents max)
+                wiggle_low = 0.0005  # 0.05% - very tight for precise dip entries (~$0.08 at $168)
+                wiggle_high = 0.005  # 0.5% - not used (highs disabled), but kept for consistency
                 
                 # Near highs? (price within 0.7% of high - only strong breakouts)
                 # Use .get() to safely access dict values

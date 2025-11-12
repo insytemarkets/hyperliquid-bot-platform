@@ -159,6 +159,9 @@ class BotInstance:
         #   'first_profit_time': float or None,  # Timestamp when position first entered profit
         #   'original_stop_loss': float  # Initial stop loss (for break-even reference)
         # }
+        self.liquidity_grab_events: Dict[str, dict] = {}  # Track wick events per pair for liquidity grab strategy
+        # Structure: {'pair': {'wick_time': float, 'support_level': float, 'support_tf': str, 'wick_price': float}}
+        self.liquidity_grab_timeout = 300  # 5 minutes (300 seconds) timeout for bounce
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
@@ -245,6 +248,8 @@ class BotInstance:
             await self.run_momentum_breakout_strategy()
         elif self.strategy['type'] == 'multi_timeframe_breakout':
             await self.run_multi_timeframe_breakout_strategy()
+        elif self.strategy['type'] == 'liquidity_grab':
+            await self.run_liquidity_grab_strategy()
         else:
             await self.run_default_strategy()
         
@@ -787,6 +792,178 @@ class BotInstance:
             except Exception as e:
                 logger.error(f"Error analyzing momentum for {pair}: {e}")
     
+    async def run_liquidity_grab_strategy(self):
+        """Liquidity Grab Strategy - Buy when price wicks below support then bounces back"""
+        logger.info(f"🎯 Running Liquidity Grab Strategy | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
+        
+        # Check if max positions reached
+        max_positions_reached = len(self.positions) >= self.strategy['max_positions']
+        if max_positions_reached:
+            return
+        
+        for pair in self.strategy['pairs']:
+            # Skip if already have position
+            has_open_position = any(p['symbol'] == pair for p in self.positions)
+            if has_open_position:
+                continue
+            
+            try:
+                # Get current price
+                if pair not in self.last_prices:
+                    continue
+                current_price = self.last_prices[pair]
+                current_time = datetime.now().timestamp()
+                
+                # Fetch 1h and 30m candles to get support levels
+                end_time = int(datetime.now().timestamp() * 1000)
+                start_time_1h = end_time - (2 * 60 * 60 * 1000)  # Last 2 hours
+                start_time_30m = end_time - (2 * 30 * 60 * 1000)  # Last 1 hour
+                
+                # Get 1h support level (last closed candle low)
+                try:
+                    candles_1h = await self.get_candles_cached(pair, '1h', start_time_1h, end_time)
+                    if candles_1h and len(candles_1h) > 1:
+                        closed_1h = candles_1h[:-1] if len(candles_1h) > 1 else candles_1h
+                        if len(closed_1h) > 0:
+                            last_closed_1h = closed_1h[-1]
+                            support_1h = float(last_closed_1h['l'])
+                            avg_volume_1h = sum(float(c['v']) for c in closed_1h) / len(closed_1h) if len(closed_1h) > 0 else 0
+                        else:
+                            support_1h = None
+                            avg_volume_1h = 0
+                    else:
+                        support_1h = None
+                        avg_volume_1h = 0
+                except Exception as e:
+                    logger.warning(f"Failed to get 1h candles for {pair}: {e}")
+                    support_1h = None
+                    avg_volume_1h = 0
+                
+                # Get 30m support level (last closed candle low)
+                try:
+                    candles_30m = await self.get_candles_cached(pair, '30m', start_time_30m, end_time)
+                    if candles_30m and len(candles_30m) > 1:
+                        closed_30m = candles_30m[:-1] if len(candles_30m) > 1 else candles_30m
+                        if len(closed_30m) > 0:
+                            last_closed_30m = closed_30m[-1]
+                            support_30m = float(last_closed_30m['l'])
+                            avg_volume_30m = sum(float(c['v']) for c in closed_30m) / len(closed_30m) if len(closed_30m) > 0 else 0
+                        else:
+                            support_30m = None
+                            avg_volume_30m = 0
+                    else:
+                        support_30m = None
+                        avg_volume_30m = 0
+                except Exception as e:
+                    logger.warning(f"Failed to get 30m candles for {pair}: {e}")
+                    support_30m = None
+                    avg_volume_30m = 0
+                
+                # Check downtrend filter (skip if bearish 1h candle)
+                is_downtrend = False
+                try:
+                    if candles_1h and len(candles_1h) > 1:
+                        last_closed_1h_check = candles_1h[-2] if len(candles_1h) > 1 else candles_1h[-1]
+                        candle_close = float(last_closed_1h_check['c'])
+                        candle_open = float(last_closed_1h_check['o'])
+                        if candle_close < candle_open:
+                            is_downtrend = True
+                except Exception as e:
+                    logger.debug(f"Failed to check downtrend for {pair}: {e}")
+                
+                if is_downtrend:
+                    logger.debug(f"⏸️ {pair} Skipping liquidity grab - Market in downtrend")
+                    continue
+                
+                # Get current volume (from 15m candles)
+                try:
+                    start_time_15m = end_time - (15 * 60 * 1000)  # Last 15 minutes
+                    candles_15m = await self.get_candles_cached(pair, '15m', start_time_15m, end_time)
+                    if candles_15m and len(candles_15m) > 0:
+                        current_volume = float(candles_15m[-1]['v']) if candles_15m else 0
+                    else:
+                        current_volume = 0
+                except Exception as e:
+                    logger.debug(f"Failed to get current volume for {pair}: {e}")
+                    current_volume = 0
+                
+                # Use average volume from 30m or 1h as baseline
+                avg_volume = avg_volume_30m if avg_volume_30m > 0 else avg_volume_1h
+                
+                # Detect Wick Below Support
+                wick_event = self.liquidity_grab_events.get(pair)
+                
+                # Check 1h support first (priority)
+                if support_1h and current_price < support_1h:
+                    # Price wicked below 1h support
+                    if not wick_event or wick_event.get('support_level') != support_1h:
+                        # New wick event or support level changed
+                        self.liquidity_grab_events[pair] = {
+                            'wick_time': current_time,
+                            'support_level': support_1h,
+                            'support_tf': '1h',
+                            'wick_price': current_price
+                        }
+                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below 1h support ${support_1h:.2f} @ ${current_price:.2f}")
+                # Check 30m support if no 1h wick
+                elif support_30m and current_price < support_30m:
+                    # Price wicked below 30m support
+                    if not wick_event or wick_event.get('support_level') != support_30m:
+                        # New wick event or support level changed
+                        self.liquidity_grab_events[pair] = {
+                            'wick_time': current_time,
+                            'support_level': support_30m,
+                            'support_tf': '30m',
+                            'wick_price': current_price
+                        }
+                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below 30m support ${support_30m:.2f} @ ${current_price:.2f}")
+                
+                # Detect Bounce Back
+                if wick_event:
+                    support_level = wick_event['support_level']
+                    support_tf = wick_event['support_tf']
+                    wick_time = wick_event['wick_time']
+                    time_since_wick = current_time - wick_time
+                    
+                    # Check if price bounced back above support
+                    if current_price > support_level:
+                        # Check if bounce happened within timeout window
+                        if time_since_wick <= self.liquidity_grab_timeout:
+                            # Check volume confirmation
+                            volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
+                            
+                            if volume_ratio >= 1.5:  # Volume spike confirmation
+                                # TRADE SIGNAL: Open LONG position
+                                reason = f"Liquidity grab bounce at {support_tf} support ${support_level:.2f}"
+                                logger.info(f"✅ {pair} LIQUIDITY GRAB BOUNCE: {reason} | Volume: {volume_ratio:.2f}x")
+                                
+                                try:
+                                    success = await self.open_position(pair, 'long', current_price)
+                                    if success:
+                                        await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
+                                        # Clear the wick event to prevent duplicate trades
+                                        del self.liquidity_grab_events[pair]
+                                    else:
+                                        logger.warning(f"⚠️ Liquidity grab signal triggered but position open failed for {pair}")
+                                except Exception as open_error:
+                                    logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
+                                    await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
+                            else:
+                                logger.debug(f"📊 {pair} Bounced above support but volume insufficient ({volume_ratio:.2f}x < 1.5x)")
+                        else:
+                            # Timeout exceeded - cleanup
+                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 5min")
+                            del self.liquidity_grab_events[pair]
+                    else:
+                        # Still below support, check if timeout exceeded
+                        if time_since_wick > self.liquidity_grab_timeout:
+                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 5min")
+                            del self.liquidity_grab_events[pair]
+                
+            except Exception as e:
+                logger.error(f"❌ Error in liquidity grab analysis for {pair}: {e}", exc_info=True)
+                await self.log('error', f"❌ Error analyzing liquidity grab for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
+    
     async def run_default_strategy(self):
         """Default strategy (for testing)"""
         await self.log('info', f"🤖 Running default strategy for {len(self.strategy['pairs'])} pairs", {})
@@ -1214,8 +1391,13 @@ class BotInstance:
                 del self.position_metadata[position_id]
                 logger.debug(f"🧹 Cleaned up metadata for position {position_id}")
             
-            # Delete the position status log (it will be replaced with monitoring log)
+            # Clean up liquidity grab events for this pair
             pair = position['symbol']
+            if pair in self.liquidity_grab_events:
+                del self.liquidity_grab_events[pair]
+                logger.debug(f"🧹 Cleaned up liquidity grab event for {pair}")
+            
+            # Delete the position status log (it will be replaced with monitoring log)
             if pair in self.position_log_ids:
                 try:
                     supabase.table('bot_logs').delete().eq('id', self.position_log_ids[pair]).execute()

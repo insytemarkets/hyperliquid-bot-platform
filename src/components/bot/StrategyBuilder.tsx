@@ -46,6 +46,11 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
       label: 'Multi-Timeframe Breakout',
       description: 'Advanced breakout strategy using 5m/15m/30m timeframes with dynamic risk management, volume analysis, and momentum scoring. Long-only quick scalps with tier-based entries.'
     },
+    {
+      value: 'liquidity_grab',
+      label: 'Liquidity Grab',
+      description: 'Buys when price wicks below support (1h/30m lows) then bounces back above it within 5 minutes with volume confirmation. Catches false breakdowns and liquidity grabs.'
+    },
   ];
 
   const availablePairs = ['BTC', 'ETH', 'SOL', 'XRP', 'ARB', 'DOGE', 'AVAX'];

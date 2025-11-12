@@ -73,6 +73,13 @@ export class StrategyFactory {
           emergencyStopLoss: -0.5,
         };
       
+      case 'liquidity_grab':
+        return {
+          bounceTimeout: 300, // 5 minutes in seconds
+          volumeMultiplier: 1.5, // 1.5x average volume required
+          supportTimeframes: ['1h', '30m'], // Support levels to monitor
+        };
+      
       default:
         return {};
     }
@@ -137,6 +144,16 @@ export class StrategyFactory {
           riskLevel: 'medium',
           avgHoldTime: '30-60 seconds',
           winRate: '75-85%',
+          recommended: true,
+        };
+      
+      case 'liquidity_grab':
+        return {
+          name: 'Liquidity Grab',
+          description: 'Buys when price wicks below support then bounces back with volume confirmation. Catches false breakdowns.',
+          riskLevel: 'medium',
+          avgHoldTime: '30-60 seconds',
+          winRate: '70-80%',
           recommended: true,
         };
       

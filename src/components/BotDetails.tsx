@@ -48,6 +48,7 @@ const BotDetails: React.FC<BotDetailsProps> = ({ bot, strategy, isOpen }) => {
     const descriptions: Record<string, string> = {
       'multi_timeframe_breakout': 'Monitors 5m/15m/30m timeframes for price highs/lows. Enters LONG when price is within 0.5% of HTF levels with volume confirmation. Quick scalping strategy.',
       'orderbook_imbalance': 'Analyzes bid/ask depth in real-time. Enters when imbalance ratio > 3.0x (buy pressure) or < 0.33x (sell pressure). Fast scalping strategy.',
+      'orderbook_imbalance_v2': 'Improved order book imbalance strategy. Enters when buy orders heavily outweigh sell orders (70%+ bids), exits on reversal (<30% bids) or time-based rules (max 60s hold). High win rate and profit.',
       'momentum_breakout': 'Tracks 5-minute price momentum. Enters on >2% or <-2% momentum. Rides strong moves.',
       'liquidity_grab': 'Detects when price wicks below 1h/30m support levels (liquidity grab) then bounces back above support within 5 minutes. Requires 1.5x volume confirmation. Catches false breakdowns and institutional liquidity grabs.',
     };

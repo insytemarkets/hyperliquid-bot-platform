@@ -32,6 +32,11 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
       description: 'Quick scalping based on order book imbalances. Fast in-and-out trades.'
     },
     {
+      value: 'orderbook_imbalance_v2',
+      label: 'Order Book Imbalance v2',
+      description: 'Improved order book imbalance strategy with better entry/exit logic. Enters when 70%+ bid volume, exits on reversal or time-based rules. High win rate and profit.'
+    },
+    {
       value: 'cross_pair_lag',
       label: 'Cross-Pair Lag',
       description: 'Trade alts when BTC moves before they catch up. High win rate.'

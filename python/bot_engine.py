@@ -140,6 +140,8 @@ class BotInstance:
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
+        self.last_candle_api_call: float = 0  # Track last API call time globally (rate limiting)
+        self.min_candle_api_interval = 1.5  # Minimum 1.5 seconds between ANY candle API calls
         self.last_analysis_log_time: float = 0  # Track last detailed analysis log
         self.last_market_metrics_log_time: float = 0  # Separate timer for market metrics (per pair)
         self.market_log_interval = 30  # Log market data every 30 seconds
@@ -169,32 +171,39 @@ class BotInstance:
     
     async def get_candles_cached(self, pair: str, interval: str, start_time: int, end_time: int):
         """Fetch candles with caching to avoid rate limits"""
-        cache_key = f"{pair}_{interval}_{start_time}"
+        # Use a more stable cache key (don't include exact start_time, use rounded timeframe)
+        # This allows better cache reuse even if start_time changes slightly
+        cache_key = f"{pair}_{interval}"
         current_time = datetime.now().timestamp()
         
-        # Check if we have cached data
+        # Check if we have cached data for this pair/interval
         if cache_key in self.candle_cache:
             last_fetch = self.last_candle_fetch.get(cache_key, 0)
             if current_time - last_fetch < self.candle_cache_ttl:
                 logger.debug(f"Using cached candles for {pair} {interval}")
                 return self.candle_cache[cache_key]
         
-        # Add rate limiting delay (1 second between calls to avoid 429 errors)
-        await asyncio.sleep(1.0)
+        # Global rate limiting: Ensure minimum interval between ANY candle API calls
+        time_since_last_call = current_time - self.last_candle_api_call
+        if time_since_last_call < self.min_candle_api_interval:
+            sleep_time = self.min_candle_api_interval - time_since_last_call
+            await asyncio.sleep(sleep_time)
+            current_time = datetime.now().timestamp()  # Update after sleep
         
         try:
             candles = info.candles_snapshot(pair, interval, start_time, end_time)
             
-            # Cache the result
+            # Cache the result (one cache per pair/interval, not per start_time)
             self.candle_cache[cache_key] = candles
             self.last_candle_fetch[cache_key] = current_time
+            self.last_candle_api_call = current_time  # Update global rate limiter
             
             return candles
         except Exception as e:
             logger.error(f"Error fetching candles for {pair}: {e}")
             # Return cached data if available, even if expired
             if cache_key in self.candle_cache:
-                logger.warning(f"Using stale cache for {pair} due to API error")
+                logger.warning(f"Using stale cache for {pair} {interval} due to API error")
                 return self.candle_cache[cache_key]
             return None
     

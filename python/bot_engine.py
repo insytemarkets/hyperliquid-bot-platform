@@ -154,7 +154,13 @@ class BotInstance:
         self.market_data_cache_ttl = 2  # Cache market data for 2 seconds
         self.last_position_close_time: Dict[str, float] = {}  # Track when positions were closed (cooldown period)
         self.position_cooldown = 60  # Wait 60 seconds after closing before opening new position on same pair
-        self.position_metadata: Dict[str, dict] = {}  # Track per-position metadata for risk management
+        self.position_metadata: Dict[str, dict] = {}
+        self.l2_cache: Dict[str, dict] = {}  # Cache L2 orderbook data
+        self.last_l2_fetch: Dict[str, float] = {}  # Track last L2 fetch time per pair
+        self.l2_cache_ttl = 2  # Cache L2 data for 2 seconds
+        self.last_l2_api_call: float = 0  # Track last L2 API call globally (rate limiting)
+        self.min_l2_api_interval = 1.0  # Minimum 1 second between ANY L2 API calls
+        # Track per-position metadata for risk management
         # Metadata structure: {
         #   'highest_profit_pct': float,  # Peak profit percentage reached
         #   'highest_profit_price': float,  # Price at peak profit
@@ -169,6 +175,50 @@ class BotInstance:
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
         self.strategy = bot_data['strategies']
+    
+    async def get_l2_snapshot_cached(self, pair: str):
+        """Fetch L2 orderbook snapshot with caching and rate limiting"""
+        current_time = datetime.now().timestamp()
+        
+        # Check cache first
+        if pair in self.l2_cache:
+            last_fetch = self.last_l2_fetch.get(pair, 0)
+            if current_time - last_fetch < self.l2_cache_ttl:
+                logger.debug(f"Using cached L2 snapshot for {pair}")
+                return self.l2_cache[pair]
+        
+        # Global rate limiting: Ensure minimum interval between ANY L2 API calls
+        time_since_last_call = current_time - self.last_l2_api_call
+        if time_since_last_call < self.min_l2_api_interval:
+            sleep_time = self.min_l2_api_interval - time_since_last_call
+            await asyncio.sleep(sleep_time)
+            current_time = datetime.now().timestamp()
+        
+        try:
+            l2_data = info.l2_snapshot(pair)
+            
+            # Check if API returned error code
+            if isinstance(l2_data, int):
+                logger.debug(f"L2 API returned error code {l2_data} for {pair}, using stale cache if available")
+                # Return cached data if available, even if expired
+                if pair in self.l2_cache:
+                    logger.debug(f"Using stale L2 cache for {pair} due to API error")
+                    return self.l2_cache[pair]
+                return None
+            
+            # Cache successful result
+            self.l2_cache[pair] = l2_data
+            self.last_l2_fetch[pair] = current_time
+            self.last_l2_api_call = current_time
+            
+            return l2_data
+        except Exception as e:
+            logger.error(f"Error fetching L2 snapshot for {pair}: {e}")
+            # Return cached data if available, even if expired
+            if pair in self.l2_cache:
+                logger.debug(f"Using stale L2 cache for {pair} due to exception")
+                return self.l2_cache[pair]
+            return None
     
     async def get_candles_cached(self, pair: str, interval: str, start_time: int, end_time: int):
         """Fetch candles with caching to avoid rate limits"""
@@ -290,13 +340,16 @@ class BotInstance:
             if has_open_position:
                 continue
             
-            # Get L2 order book
+            # Get L2 order book (with caching and rate limiting)
             try:
-                logger.debug(f"Fetching L2 snapshot for {pair}...")
-                l2_data = info.l2_snapshot(pair)
-                logger.debug(f"L2 response type: {type(l2_data)}, value: {l2_data}")
+                l2_data = await self.get_l2_snapshot_cached(pair)
                 
-                # Check if API returned error code instead of data
+                # Check if we got valid data
+                if l2_data is None:
+                    logger.debug(f"⚠️ No L2 data available for {pair}")
+                    continue  # Skip this pair, no error logged
+                
+                # Check if API returned error code (shouldn't happen with cached version)
                 if isinstance(l2_data, int):
                     logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair} - skipping")
                     continue  # Skip this pair, no error logged
@@ -1086,14 +1139,19 @@ class BotInstance:
                 
                 logger.debug(f"📊 {pair} Processing orderbook v2 | Price: ${current_price:.2f} | Has Position: {has_open_position}")
                 
-                # Get L2 order book snapshot
+                # Get L2 order book snapshot (with caching and rate limiting)
                 try:
-                    l2_data = info.l2_snapshot(pair)
+                    l2_data = await self.get_l2_snapshot_cached(pair)
                     
-                    # Check if API returned error code instead of data
+                    # Check if we got valid data
+                    if l2_data is None:
+                        logger.debug(f"⚠️ No L2 data available for {pair} (using stale cache or API error)")
+                        # Don't log error spam - just skip this tick
+                        continue
+                    
+                    # Check if API returned error code (shouldn't happen with cached version, but double-check)
                     if isinstance(l2_data, int):
-                        logger.warning(f"⚠️ L2 API returned error code {l2_data} for {pair}")
-                        await self.log('error', f"⚠️ Orderbook API error for {pair}: Code {l2_data}", {'pair': pair, 'error_code': l2_data})
+                        logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair}")
                         continue
                     
                     if not l2_data or 'levels' not in l2_data:

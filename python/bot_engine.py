@@ -157,9 +157,10 @@ class BotInstance:
         self.position_metadata: Dict[str, dict] = {}
         self.l2_cache: Dict[str, dict] = {}  # Cache L2 orderbook data
         self.last_l2_fetch: Dict[str, float] = {}  # Track last L2 fetch time per pair
-        self.l2_cache_ttl = 2  # Cache L2 data for 2 seconds
+        self.l2_cache_ttl = 5  # Cache L2 data for 5 seconds (increased to reduce API calls)
         self.last_l2_api_call: float = 0  # Track last L2 API call globally (rate limiting)
-        self.min_l2_api_interval = 1.0  # Minimum 1 second between ANY L2 API calls
+        self.min_l2_api_interval = 2.0  # Minimum 2 seconds between ANY L2 API calls (increased to prevent rate limits)
+        self.l2_error_count: Dict[str, int] = {}  # Track consecutive errors per pair
         # Track per-position metadata for risk management
         # Metadata structure: {
         #   'highest_profit_pct': float,  # Peak profit percentage reached
@@ -180,11 +181,20 @@ class BotInstance:
         """Fetch L2 orderbook snapshot with caching and rate limiting"""
         current_time = datetime.now().timestamp()
         
-        # Check cache first
+        # Check cache first (use stale cache if recent errors)
         if pair in self.l2_cache:
             last_fetch = self.last_l2_fetch.get(pair, 0)
-            if current_time - last_fetch < self.l2_cache_ttl:
-                logger.debug(f"Using cached L2 snapshot for {pair}")
+            cache_age = current_time - last_fetch
+            
+            # Use cache if still fresh
+            if cache_age < self.l2_cache_ttl:
+                logger.debug(f"Using cached L2 snapshot for {pair} (age: {cache_age:.1f}s)")
+                return self.l2_cache[pair]
+            
+            # If cache is stale but we have recent errors, use stale cache anyway
+            error_count = self.l2_error_count.get(pair, 0)
+            if error_count > 3 and cache_age < 30:  # Use stale cache up to 30 seconds old if many errors
+                logger.debug(f"Using stale L2 cache for {pair} due to recent errors (age: {cache_age:.1f}s)")
                 return self.l2_cache[pair]
         
         # Global rate limiting: Ensure minimum interval between ANY L2 API calls
@@ -199,21 +209,29 @@ class BotInstance:
             
             # Check if API returned error code
             if isinstance(l2_data, int):
-                logger.debug(f"L2 API returned error code {l2_data} for {pair}, using stale cache if available")
+                # Increment error count
+                self.l2_error_count[pair] = self.l2_error_count.get(pair, 0) + 1
+                logger.debug(f"L2 API returned error code {l2_data} for {pair} (error count: {self.l2_error_count[pair]})")
+                
                 # Return cached data if available, even if expired
                 if pair in self.l2_cache:
                     logger.debug(f"Using stale L2 cache for {pair} due to API error")
                     return self.l2_cache[pair]
                 return None
             
-            # Cache successful result
+            # Success - reset error count and cache result
+            self.l2_error_count[pair] = 0  # Reset error count on success
             self.l2_cache[pair] = l2_data
             self.last_l2_fetch[pair] = current_time
             self.last_l2_api_call = current_time
             
+            logger.debug(f"✅ Successfully fetched L2 snapshot for {pair}")
             return l2_data
         except Exception as e:
+            # Increment error count
+            self.l2_error_count[pair] = self.l2_error_count.get(pair, 0) + 1
             logger.error(f"Error fetching L2 snapshot for {pair}: {e}")
+            
             # Return cached data if available, even if expired
             if pair in self.l2_cache:
                 logger.debug(f"Using stale L2 cache for {pair} due to exception")
@@ -327,14 +345,24 @@ class BotInstance:
         if len(self.positions) >= self.strategy['max_positions']:
             return  # Skip if max positions reached
         
-        logger.info(f"📊 Order Book Imbalance | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
+        # Get pairs from strategy config (handle both list and string formats)
+        pairs = self.strategy.get('pairs', [])
+        if isinstance(pairs, str):
+            pairs = [pairs]  # Convert single string to list
+        if not pairs:
+            logger.warning(f"⚠️ No pairs configured for orderbook imbalance strategy")
+            await self.log('error', f"⚠️ No trading pairs configured for this strategy", {})
+            return
+        
+        logger.info(f"📊 Order Book Imbalance | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {pairs}")
         
         # Log strategy start (only once per bot instance)
         if not hasattr(self, '_orderbook_v1_started'):
-            await self.log('info', f"🚀 Order Book Imbalance Strategy Started | Pairs: {', '.join(self.strategy['pairs'])} | Buy Threshold: {buy_threshold}x | Sell Threshold: {sell_threshold}x", {})
+            pair_list = pairs if isinstance(pairs, list) else [pairs]
+            await self.log('info', f"🚀 Order Book Imbalance Strategy Started | Pairs: {', '.join(pair_list)} | Buy Threshold: {buy_threshold}x | Sell Threshold: {sell_threshold}x", {})
             self._orderbook_v1_started = True
         
-        for pair in self.strategy['pairs']:
+        for pair in pairs:
             # Skip if already have position
             has_open_position = any(p['symbol'] == pair for p in self.positions)
             if has_open_position:
@@ -1116,14 +1144,24 @@ class BotInstance:
         if len(self.positions) >= self.strategy['max_positions']:
             return
         
-        logger.info(f"📊 Order Book Imbalance v2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
+        # Get pairs from strategy config (handle both list and string formats)
+        pairs = self.strategy.get('pairs', [])
+        if isinstance(pairs, str):
+            pairs = [pairs]  # Convert single string to list
+        if not pairs:
+            logger.warning(f"⚠️ No pairs configured for orderbook v2 strategy")
+            await self.log('error', f"⚠️ No trading pairs configured for this strategy", {})
+            return
+        
+        logger.info(f"📊 Order Book Imbalance v2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {pairs}")
         
         # Log strategy start (only once per bot instance)
         if not hasattr(self, '_orderbook_v2_started'):
-            await self.log('info', f"🚀 Order Book Imbalance v2 Strategy Started | Pairs: {', '.join(self.strategy['pairs'])} | Threshold: {imbalance_threshold*100:.0f}% bids", {})
+            pair_list = pairs if isinstance(pairs, list) else [pairs]
+            await self.log('info', f"🚀 Order Book Imbalance v2 Strategy Started | Pairs: {', '.join(pair_list)} | Threshold: {imbalance_threshold*100:.0f}% bids", {})
             self._orderbook_v2_started = True
         
-        for pair in self.strategy['pairs']:
+        for pair in pairs:
             # Ensure we have price data before proceeding
             if pair not in self.last_prices:
                 logger.warning(f"⚠️ {pair} No price data yet, will retry next tick")

@@ -671,9 +671,9 @@ class BotInstance:
                 
                 # Note: is_downtrend flag set above, will check after market metrics logging
                 
-                # DIP-BUYING STRATEGY: Very tight wiggle for precise support entries
-                # Only buy when price is very close to the low (within a few cents max)
-                wiggle_low = 0.0005  # 0.05% - very tight for precise dip entries (~$0.08 at $168)
+                # DIP-BUYING STRATEGY: Tight wiggle for precise support entries
+                # Only buy when price is close to the low (within ~0.15% for better entry opportunities)
+                wiggle_low = 0.0015  # 0.15% - tight but not too restrictive (~$0.25 at $168)
                 wiggle_high = 0.005  # 0.5% - not used (highs disabled), but kept for consistency
                 
                 # Near highs? (price within 0.7% of high - only strong breakouts)
@@ -845,8 +845,9 @@ class BotInstance:
                         self.last_position_update_time[pair] = current_time_monitor
                 
                 # Skip trading if in downtrend (after logging market metrics)
+                # NOTE: This filter can be very restrictive - consider making it less strict if missing trades
                 if is_downtrend:
-                    logger.debug(f"⏸️ {pair} Skipping trade - Market in downtrend")
+                    logger.info(f"⏸️ {pair} Skipping trade - Market in downtrend (last 1h candle bearish)")
                     continue  # Skip trading logic, but market metrics already logged above
                 
                 # Only check for new trades if we don't already have a position AND haven't reached max positions
@@ -873,7 +874,7 @@ class BotInstance:
                           f"1h Low: Near={near_low_1h} (L=${low_1h_val:.2f} | Dist: {dist_to_low_1h:+.2f}%) | "
                           f"30m Low: Near={near_low_30m} (L=${low_30m_val:.2f} | Dist: {dist_to_low_30m:+.2f}%) | "
                           f"15m Low: Near={near_low_15m} (L=${low_15m_val:.2f} | Dist: {dist_to_low_15m:+.2f}%) | "
-                          f"Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
+                          f"Vol: {volume_weight:.2f}x | HasVol: {has_volume} | Downtrend: {is_downtrend}")
                 
                 # STRICT DIP-BUYING STRATEGY: ONLY trade lows (support levels)
                 # NO high breakouts - too high risk

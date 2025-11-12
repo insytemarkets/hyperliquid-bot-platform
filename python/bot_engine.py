@@ -671,9 +671,9 @@ class BotInstance:
                 
                 # Note: is_downtrend flag set above, will check after market metrics logging
                 
-                # DIP-BUYING STRATEGY: Tight wiggle for precise support entries
-                # Only buy when price is close to the low (within ~0.15% for better entry opportunities)
-                wiggle_low = 0.0015  # 0.15% - tight but not too restrictive (~$0.25 at $168)
+                # DIP-BUYING STRATEGY: Very tight wiggle for precise support entries
+                # Only buy when price is very close to the low (within a few cents max)
+                wiggle_low = 0.0005  # 0.05% - very tight for precise dip entries (~$0.08 at $168)
                 wiggle_high = 0.005  # 0.5% - not used (highs disabled), but kept for consistency
                 
                 # Near highs? (price within 0.7% of high - only strong breakouts)

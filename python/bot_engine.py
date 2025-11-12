@@ -270,19 +270,15 @@ class BotInstance:
     
     async def run_orderbook_imbalance_strategy(self):
         """Order Book Imbalance Strategy"""
+        # Get strategy parameters with defaults
+        buy_threshold = self.strategy.get('buy_threshold', 3.0)  # Default 3.0x bid/ask ratio
+        sell_threshold = self.strategy.get('sell_threshold', 0.33)  # Default 0.33x bid/ask ratio
+        
         if len(self.positions) >= self.strategy['max_positions']:
-            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
-            return
+            return  # Skip if max positions reached
         
-        # Get available coins from meta
-        try:
-            meta = info.meta()
-            available_coins = [asset['name'] for asset in meta['universe']]
-            logger.info(f"📋 Available coins: {available_coins[:10]}...")  # Show first 10
-        except Exception as e:
-            logger.error(f"Failed to fetch meta: {e}")
+        logger.info(f"📊 Order Book Imbalance | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
-        logger.info(f"🔍 Analyzing orderbook for pairs: {self.strategy['pairs']}")
         for pair in self.strategy['pairs']:
             # Skip if already have position
             if any(p['symbol'] == pair for p in self.positions):
@@ -321,38 +317,69 @@ class BotInstance:
                 
                 imbalance_ratio = bid_depth / ask_depth if ask_depth > 0 else 0
                 
+                # Get current price (use market price, not orderbook price)
+                if pair not in self.last_prices:
+                    logger.debug(f"⚠️ No price data for {pair}, skipping")
+                    continue
+                
+                current_price = self.last_prices[pair]
+                
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
-                if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                if pair not in self.last_market_metrics_log_time:
+                    self.last_market_metrics_log_time[pair] = 0
+                
+                if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
                     try:
-                        await self.log(
-                            'market_data',
-                            f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                            {
-                                'pair': pair,
-                                'bid_depth': bid_depth,
-                                'ask_depth': ask_depth,
-                                'imbalance_ratio': imbalance_ratio,
-                                'best_bid': float(bids[0][0]),
-                                'best_ask': float(asks[0][0])
-                            }
-                        )
-                        self.last_analysis_log_time = current_time
+                        message = f"📊 {pair} | ${current_price:.2f} | Order Book: Bid {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) / Ask {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x"
+                        if imbalance_ratio > buy_threshold:
+                            message += f" | 🔴 BUY signal (> {buy_threshold}x)"
+                        elif imbalance_ratio < sell_threshold:
+                            message += f" | 🔴 SELL signal (< {sell_threshold}x)"
+                        else:
+                            message += f" | ⚪ No signal (need > {buy_threshold}x or < {sell_threshold}x)"
+                        
+                        await self.log_update('market_metrics', pair, message, {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'bid_depth': bid_depth,
+                            'ask_depth': ask_depth,
+                            'imbalance_ratio': imbalance_ratio,
+                            'best_bid': float(bids[0][0]),
+                            'best_ask': float(asks[0][0]),
+                            'buy_threshold': buy_threshold,
+                            'sell_threshold': sell_threshold
+                        })
+                        self.last_market_metrics_log_time[pair] = current_time
                     except Exception as log_error:
                         logger.debug(f"Failed to log market data for {pair}: {log_error}")
                 
                 # Entry signals
                 try:
-                    if imbalance_ratio > 3.0:  # Strong buy pressure
-                        success = await self.open_position(pair, 'long', float(asks[0][0]))
+                    if imbalance_ratio > buy_threshold:  # Strong buy pressure
+                        logger.info(f"🟢 {pair} BUY signal triggered: Imbalance {imbalance_ratio:.2f}x > {buy_threshold}x threshold")
+                        success = await self.open_position(pair, 'long', current_price)
                         if success:
-                            await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
-                    elif imbalance_ratio < 0.33:  # Strong sell pressure
-                        success = await self.open_position(pair, 'short', float(bids[0][0]))
+                            await self.log('signal', f"🟢 LONG {pair} @ ${current_price:.2f} - Strong bid pressure ({imbalance_ratio:.2f}x > {buy_threshold}x)", {
+                                'imbalance_ratio': imbalance_ratio,
+                                'buy_threshold': buy_threshold
+                            })
+                        else:
+                            logger.warning(f"⚠️ Failed to open LONG position for {pair}")
+                    elif imbalance_ratio < sell_threshold:  # Strong sell pressure
+                        logger.info(f"🔴 {pair} SELL signal triggered: Imbalance {imbalance_ratio:.2f}x < {sell_threshold}x threshold")
+                        success = await self.open_position(pair, 'short', current_price)
                         if success:
-                            await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                            await self.log('signal', f"🔴 SHORT {pair} @ ${current_price:.2f} - Strong ask pressure ({imbalance_ratio:.2f}x < {sell_threshold}x)", {
+                                'imbalance_ratio': imbalance_ratio,
+                                'sell_threshold': sell_threshold
+                            })
+                        else:
+                            logger.warning(f"⚠️ Failed to open SHORT position for {pair}")
+                    else:
+                        logger.debug(f"📊 {pair} No signal: Ratio {imbalance_ratio:.2f}x (need > {buy_threshold}x or < {sell_threshold}x)")
                 except Exception as trade_error:
-                    logger.warning(f"⚠️ Failed to execute trade for {pair}: {trade_error}")
+                    logger.error(f"❌ Failed to execute trade for {pair}: {trade_error}", exc_info=True)
                     
             except Exception as e:
                 # Only log actual unexpected errors, not API error codes

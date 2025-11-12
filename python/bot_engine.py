@@ -13,7 +13,6 @@ from loguru import logger
 from supabase import create_client, Client
 from hyperliquid.info import Info
 from dotenv import load_dotenv
-import aiohttp
 
 # Load environment variables
 load_dotenv()
@@ -141,8 +140,6 @@ class BotInstance:
         self.candle_cache: Dict[str, dict] = {}  # Cache candles to avoid rate limits
         self.last_candle_fetch: Dict[str, float] = {}  # Track last fetch time per pair
         self.candle_cache_ttl = 60  # Cache candles for 60 seconds (increased from 30)
-        self.last_candle_api_call: float = 0  # Track last API call time globally (rate limiting)
-        self.min_candle_api_interval = 1.5  # Minimum 1.5 seconds between ANY candle API calls
         self.last_analysis_log_time: float = 0  # Track last detailed analysis log
         self.last_market_metrics_log_time: float = 0  # Separate timer for market metrics (per pair)
         self.market_log_interval = 30  # Log market data every 30 seconds
@@ -155,14 +152,7 @@ class BotInstance:
         self.market_data_cache_ttl = 2  # Cache market data for 2 seconds
         self.last_position_close_time: Dict[str, float] = {}  # Track when positions were closed (cooldown period)
         self.position_cooldown = 60  # Wait 60 seconds after closing before opening new position on same pair
-        self.position_metadata: Dict[str, dict] = {}
-        self.l2_cache: Dict[str, dict] = {}  # Cache L2 orderbook data
-        self.last_l2_fetch: Dict[str, float] = {}  # Track last L2 fetch time per pair
-        self.l2_cache_ttl = 5  # Cache L2 data for 5 seconds (increased to reduce API calls)
-        self.last_l2_api_call: float = 0  # Track last L2 API call globally (rate limiting)
-        self.min_l2_api_interval = 2.0  # Minimum 2 seconds between ANY L2 API calls (increased to prevent rate limits)
-        self.l2_error_count: Dict[str, int] = {}  # Track consecutive errors per pair
-        # Track per-position metadata for risk management
+        self.position_metadata: Dict[str, dict] = {}  # Track per-position metadata for risk management
         # Metadata structure: {
         #   'highest_profit_pct': float,  # Peak profit percentage reached
         #   'highest_profit_price': float,  # Price at peak profit
@@ -172,183 +162,44 @@ class BotInstance:
         self.liquidity_grab_events: Dict[str, dict] = {}  # Track wick events per pair for liquidity grab strategy
         # Structure: {'pair': {'wick_time': float, 'support_level': float, 'support_tf': str, 'wick_price': float}}
         self.liquidity_grab_timeout = 300  # 5 minutes (300 seconds) timeout for bounce
-        self.orderbook_v2_entry_times: Dict[str, float] = {}  # Track entry time per pair for orderbook v2 strategy (minimum hold time)
+        self.last_liquidity_grab_check: float = 0  # Track last liquidity grab check time
+        self.liquidity_grab_check_interval = 5  # Check every 5 seconds (don't need to check every second)
         
     def update_config(self, bot_data: dict):
         """Update bot configuration"""
         self.strategy = bot_data['strategies']
     
-    async def get_l2_snapshot_cached(self, pair: str):
-        """Fetch L2 orderbook snapshot with caching and rate limiting"""
-        current_time = datetime.now().timestamp()
-        
-        # Check cache first (use stale cache if recent errors)
-        if pair in self.l2_cache:
-            last_fetch = self.last_l2_fetch.get(pair, 0)
-            cache_age = current_time - last_fetch
-            
-            # Use cache if still fresh
-            if cache_age < self.l2_cache_ttl:
-                logger.debug(f"Using cached L2 snapshot for {pair} (age: {cache_age:.1f}s)")
-                return self.l2_cache[pair]
-            
-            # If cache is stale but we have recent errors, use stale cache anyway
-            error_count = self.l2_error_count.get(pair, 0)
-            if error_count > 3 and cache_age < 30:  # Use stale cache up to 30 seconds old if many errors
-                logger.debug(f"Using stale L2 cache for {pair} due to recent errors (age: {cache_age:.1f}s)")
-                return self.l2_cache[pair]
-        
-        # Global rate limiting: Ensure minimum interval between ANY L2 API calls
-        time_since_last_call = current_time - self.last_l2_api_call
-        if time_since_last_call < self.min_l2_api_interval:
-            sleep_time = self.min_l2_api_interval - time_since_last_call
-            await asyncio.sleep(sleep_time)
-            current_time = datetime.now().timestamp()
-        
-        try:
-            # Try different method names - Python SDK might use different naming
-            l2_data = None
-            
-            # Try l2_book method (snake_case)
-            if hasattr(info, 'l2_book'):
-                try:
-                    l2_data = info.l2_book(pair)
-                    # Check if it returned an error code
-                    if isinstance(l2_data, int):
-                        logger.debug(f"SDK l2_book returned error code {l2_data} for {pair}")
-                        l2_data = None  # Reset to None so fallback is tried
-                except Exception as sdk_error:
-                    logger.debug(f"SDK l2_book raised exception for {pair}: {sdk_error}")
-                    l2_data = None
-            
-            # Try l2Book method (camelCase)
-            if l2_data is None and hasattr(info, 'l2Book'):
-                try:
-                    l2_data = info.l2Book(pair)
-                    # Check if it returned an error code
-                    if isinstance(l2_data, int):
-                        logger.debug(f"SDK l2Book returned error code {l2_data} for {pair}")
-                        l2_data = None  # Reset to None so fallback is tried
-                except Exception as sdk_error:
-                    logger.debug(f"SDK l2Book raised exception for {pair}: {sdk_error}")
-                    l2_data = None
-            
-            # Try l2_snapshot method (current)
-            if l2_data is None:
-                try:
-                    l2_data = info.l2_snapshot(pair)
-                    # Check if it returned an error code
-                    if isinstance(l2_data, int):
-                        logger.debug(f"SDK l2_snapshot returned error code {l2_data} for {pair}")
-                        l2_data = None  # Reset to None so fallback is tried
-                except Exception as sdk_error:
-                    logger.debug(f"SDK l2_snapshot raised exception for {pair}: {sdk_error}")
-                    l2_data = None
-            
-            # Fallback: Direct API call if SDK methods fail or return error codes
-            if l2_data is None or isinstance(l2_data, int):
-                try:
-                    logger.info(f"🔄 SDK returned error code {l2_data if isinstance(l2_data, int) else 'None'} for {pair}, trying direct API call...")
-                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
-                        async with session.post(
-                            'https://api.hyperliquid.xyz/info',
-                            json={'type': 'l2Book', 'coin': pair},
-                            headers={'Content-Type': 'application/json'}
-                        ) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                if data and len(data) > 0 and isinstance(data[0], dict):
-                                    l2_data = data[0]  # Returns { coin, levels: [[price, size], ...], time }
-                                    logger.info(f"✅ Direct API call succeeded for {pair}")
-                                else:
-                                    logger.warning(f"⚠️ Direct API returned invalid data structure for {pair}: {type(data)}")
-                            else:
-                                response_text = await response.text()
-                                logger.warning(f"⚠️ Direct API returned status {response.status} for {pair}: {response_text[:100]}")
-                except asyncio.TimeoutError:
-                    logger.warning(f"⚠️ Direct API call timed out for {pair}")
-                except Exception as api_error:
-                    logger.warning(f"⚠️ Direct API call failed for {pair}: {api_error}")
-            
-            # Check if API returned error code
-            if isinstance(l2_data, int):
-                # Increment error count
-                self.l2_error_count[pair] = self.l2_error_count.get(pair, 0) + 1
-                logger.debug(f"L2 API returned error code {l2_data} for {pair} (error count: {self.l2_error_count[pair]})")
-                
-                # Return cached data if available, even if expired
-                if pair in self.l2_cache:
-                    logger.debug(f"Using stale L2 cache for {pair} due to API error")
-                    return self.l2_cache[pair]
-                return None
-            
-            # Validate data structure
-            if not l2_data or not isinstance(l2_data, dict):
-                logger.debug(f"Invalid L2 data type for {pair}: {type(l2_data)}")
-                if pair in self.l2_cache:
-                    return self.l2_cache[pair]
-                return None
-            
-            if 'levels' not in l2_data:
-                logger.debug(f"L2 data missing 'levels' key for {pair}")
-                if pair in self.l2_cache:
-                    return self.l2_cache[pair]
-                return None
-            
-            # Success - reset error count and cache result
-            self.l2_error_count[pair] = 0  # Reset error count on success
-            self.l2_cache[pair] = l2_data
-            self.last_l2_fetch[pair] = current_time
-            self.last_l2_api_call = current_time
-            
-            logger.debug(f"✅ Successfully fetched L2 snapshot for {pair}")
-            return l2_data
-        except Exception as e:
-            # Increment error count
-            self.l2_error_count[pair] = self.l2_error_count.get(pair, 0) + 1
-            logger.error(f"Error fetching L2 snapshot for {pair}: {e}")
-            
-            # Return cached data if available, even if expired
-            if pair in self.l2_cache:
-                logger.debug(f"Using stale L2 cache for {pair} due to exception")
-                return self.l2_cache[pair]
-            return None
-    
     async def get_candles_cached(self, pair: str, interval: str, start_time: int, end_time: int):
         """Fetch candles with caching to avoid rate limits"""
-        # Use a more stable cache key (don't include exact start_time, use rounded timeframe)
-        # This allows better cache reuse even if start_time changes slightly
-        cache_key = f"{pair}_{interval}"
+        # Use a more stable cache key that doesn't change every second
+        # Round start_time to nearest minute to improve cache hit rate
+        start_time_rounded = (start_time // 60000) * 60000  # Round to nearest minute
+        cache_key = f"{pair}_{interval}_{start_time_rounded}"
         current_time = datetime.now().timestamp()
         
-        # Check if we have cached data for this pair/interval
+        # Check if we have cached data
         if cache_key in self.candle_cache:
             last_fetch = self.last_candle_fetch.get(cache_key, 0)
             if current_time - last_fetch < self.candle_cache_ttl:
                 logger.debug(f"Using cached candles for {pair} {interval}")
                 return self.candle_cache[cache_key]
         
-        # Global rate limiting: Ensure minimum interval between ANY candle API calls
-        time_since_last_call = current_time - self.last_candle_api_call
-        if time_since_last_call < self.min_candle_api_interval:
-            sleep_time = self.min_candle_api_interval - time_since_last_call
-            await asyncio.sleep(sleep_time)
-            current_time = datetime.now().timestamp()  # Update after sleep
+        # Add rate limiting delay (1.5 seconds between calls to avoid 429 errors)
+        await asyncio.sleep(1.5)
         
         try:
             candles = info.candles_snapshot(pair, interval, start_time, end_time)
             
-            # Cache the result (one cache per pair/interval, not per start_time)
+            # Cache the result
             self.candle_cache[cache_key] = candles
             self.last_candle_fetch[cache_key] = current_time
-            self.last_candle_api_call = current_time  # Update global rate limiter
             
             return candles
         except Exception as e:
             logger.error(f"Error fetching candles for {pair}: {e}")
             # Return cached data if available, even if expired
             if cache_key in self.candle_cache:
-                logger.warning(f"Using stale cache for {pair} {interval} due to API error")
+                logger.warning(f"Using stale cache for {pair} due to API error")
                 return self.candle_cache[cache_key]
             return None
     
@@ -398,8 +249,6 @@ class BotInstance:
         # Run strategy
         if self.strategy['type'] == 'orderbook_imbalance':
             await self.run_orderbook_imbalance_strategy()
-        elif self.strategy['type'] == 'orderbook_imbalance_v2':
-            await self.run_orderbook_imbalance_v2_strategy()
         elif self.strategy['type'] == 'momentum_breakout':
             await self.run_momentum_breakout_strategy()
         elif self.strategy['type'] == 'multi_timeframe_breakout':
@@ -414,60 +263,45 @@ class BotInstance:
     
     async def run_orderbook_imbalance_strategy(self):
         """Order Book Imbalance Strategy"""
-        # Get strategy parameters with defaults
-        buy_threshold = self.strategy.get('buy_threshold', 3.0)  # Default 3.0x bid/ask ratio
-        sell_threshold = self.strategy.get('sell_threshold', 0.33)  # Default 0.33x bid/ask ratio
-        
         if len(self.positions) >= self.strategy['max_positions']:
-            return  # Skip if max positions reached
-        
-        # Get pairs from strategy config (handle both list and string formats)
-        pairs = self.strategy.get('pairs', [])
-        if isinstance(pairs, str):
-            pairs = [pairs]  # Convert single string to list
-        if not pairs:
-            logger.warning(f"⚠️ No pairs configured for orderbook imbalance strategy")
-            await self.log('error', f"⚠️ No trading pairs configured for this strategy", {})
+            await self.log('info', f"⚠️ Max positions reached ({self.strategy['max_positions']})", {})
             return
         
-        logger.info(f"📊 Order Book Imbalance | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {pairs}")
+        # Get available coins from meta
+        try:
+            meta = info.meta()
+            available_coins = [asset['name'] for asset in meta['universe']]
+            logger.info(f"📋 Available coins: {available_coins[:10]}...")  # Show first 10
+        except Exception as e:
+            logger.error(f"Failed to fetch meta: {e}")
         
-        # Log strategy start (only once per bot instance)
-        if not hasattr(self, '_orderbook_v1_started'):
-            pair_list = pairs if isinstance(pairs, list) else [pairs]
-            await self.log('info', f"🚀 Order Book Imbalance Strategy Started | Pairs: {', '.join(pair_list)} | Buy Threshold: {buy_threshold}x | Sell Threshold: {sell_threshold}x", {})
-            self._orderbook_v1_started = True
-        
-        for pair in pairs:
+        logger.info(f"🔍 Analyzing orderbook for pairs: {self.strategy['pairs']}")
+        for pair in self.strategy['pairs']:
             # Skip if already have position
-            has_open_position = any(p['symbol'] == pair for p in self.positions)
-            if has_open_position:
+            if any(p['symbol'] == pair for p in self.positions):
                 continue
             
-            # Get L2 order book (with caching and rate limiting)
+            # Get L2 order book
             try:
-                l2_data = await self.get_l2_snapshot_cached(pair)
+                logger.debug(f"Fetching L2 snapshot for {pair}...")
+                l2_data = info.l2_snapshot(pair)
+                logger.debug(f"L2 response type: {type(l2_data)}, value: {l2_data}")
                 
-                # Check if we got valid data
-                if l2_data is None:
-                    logger.debug(f"⚠️ No L2 data available for {pair}")
-                    continue  # Skip this pair, no error logged
-                
-                # Check if API returned error code (shouldn't happen with cached version)
+                # Check if API returned error code instead of data
                 if isinstance(l2_data, int):
-                    logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair} - skipping")
-                    continue  # Skip this pair, no error logged
+                    logger.warning(f"❌ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
+                    await self.log('info', f"⚠️ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
+                    continue
                     
-                if not l2_data or not isinstance(l2_data, dict) or 'levels' not in l2_data:
-                    logger.debug(f"⚠️ Invalid L2 data structure for {pair}: {type(l2_data)}")
-                    continue  # Skip this pair, no error logged
+                if not l2_data or 'levels' not in l2_data:
+                    logger.warning(f"Invalid L2 data structure for {pair}: {l2_data}")
+                    continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]
                 asks = l2_data['levels'][1]
                 
-                if not bids or not asks or len(bids) == 0 or len(asks) == 0:
-                    logger.debug(f"⚠️ Empty order book for {pair}")
-                    continue  # Skip this pair, no error logged
+                if not bids or not asks:
+                    continue
                 
                 # Calculate order book imbalance
                 bid_depth = sum(float(level[1]) for level in bids[:10])
@@ -475,110 +309,39 @@ class BotInstance:
                 
                 total_depth = bid_depth + ask_depth
                 if total_depth == 0:
-                    logger.debug(f"⚠️ Zero total depth for {pair}")
-                    continue  # Skip this pair, no error logged
+                    continue
                 
                 imbalance_ratio = bid_depth / ask_depth if ask_depth > 0 else 0
                 
-                # Get current price (use market price, not orderbook price)
-                if pair not in self.last_prices:
-                    logger.debug(f"⚠️ No price data for {pair}, skipping")
-                    continue
-                
-                current_price = self.last_prices[pair]
-                
-                # Initialize timers
+                # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
-                if pair not in self.last_market_metrics_log_time:
-                    self.last_market_metrics_log_time[pair] = 0
-                if pair not in self.last_position_update_time:
-                    self.last_position_update_time[pair] = 0
-                
-                # Log monitoring status when no position (every 5 seconds)
-                if not has_open_position:
-                    if current_time - self.last_position_update_time[pair] >= 5:
-                        try:
-                            message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | Order Book Ratio: {imbalance_ratio:.2f}x"
-                            if imbalance_ratio > buy_threshold:
-                                message += f" | 🔴 BUY signal ready (> {buy_threshold}x)"
-                            elif imbalance_ratio < sell_threshold:
-                                message += f" | 🔴 SELL signal ready (< {sell_threshold}x)"
-                            else:
-                                message += f" | ⚪ Waiting for imbalance (> {buy_threshold}x or < {sell_threshold}x)"
-                            
-                            await self.log_update('monitoring', pair, message, {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'bid_depth': bid_depth,
-                                'ask_depth': ask_depth,
-                                'imbalance_ratio': imbalance_ratio,
-                                'best_bid': float(bids[0][0]),
-                                'best_ask': float(asks[0][0]),
-                                'update_type': 'monitoring'
-                            })
-                            self.last_position_update_time[pair] = current_time
-                        except Exception as monitor_error:
-                            logger.debug(f"Failed to log monitoring for {pair}: {monitor_error}")
-                
-                # Log market metrics every 30 seconds
-                if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
-                    try:
-                        message = f"📊 {pair} | ${current_price:.2f} | Order Book: Bid {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) / Ask {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x"
-                        if imbalance_ratio > buy_threshold:
-                            message += f" | 🔴 BUY signal (> {buy_threshold}x)"
-                        elif imbalance_ratio < sell_threshold:
-                            message += f" | 🔴 SELL signal (< {sell_threshold}x)"
-                        else:
-                            message += f" | ⚪ No signal (need > {buy_threshold}x or < {sell_threshold}x)"
-                        
-                        await self.log_update('market_metrics', pair, message, {
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                    await self.log(
+                        'market_data',
+                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                        {
                             'pair': pair,
-                            'current_price': current_price,
                             'bid_depth': bid_depth,
                             'ask_depth': ask_depth,
                             'imbalance_ratio': imbalance_ratio,
                             'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0]),
-                            'buy_threshold': buy_threshold,
-                            'sell_threshold': sell_threshold
-                        })
-                        self.last_market_metrics_log_time[pair] = current_time
-                    except Exception as log_error:
-                        logger.debug(f"Failed to log market data for {pair}: {log_error}")
+                            'best_ask': float(asks[0][0])
+                        }
+                    )
+                    self.last_analysis_log_time = current_time
                 
                 # Entry signals
-                try:
-                    if imbalance_ratio > buy_threshold:  # Strong buy pressure
-                        logger.info(f"🟢 {pair} BUY signal triggered: Imbalance {imbalance_ratio:.2f}x > {buy_threshold}x threshold")
-                        success = await self.open_position(pair, 'long', current_price)
-                        if success:
-                            await self.log('signal', f"🟢 LONG {pair} @ ${current_price:.2f} - Strong bid pressure ({imbalance_ratio:.2f}x > {buy_threshold}x)", {
-                                'imbalance_ratio': imbalance_ratio,
-                                'buy_threshold': buy_threshold
-                            })
-                        else:
-                            logger.warning(f"⚠️ Failed to open LONG position for {pair}")
-                    elif imbalance_ratio < sell_threshold:  # Strong sell pressure
-                        logger.info(f"🔴 {pair} SELL signal triggered: Imbalance {imbalance_ratio:.2f}x < {sell_threshold}x threshold")
-                        success = await self.open_position(pair, 'short', current_price)
-                        if success:
-                            await self.log('signal', f"🔴 SHORT {pair} @ ${current_price:.2f} - Strong ask pressure ({imbalance_ratio:.2f}x < {sell_threshold}x)", {
-                                'imbalance_ratio': imbalance_ratio,
-                                'sell_threshold': sell_threshold
-                            })
-                        else:
-                            logger.warning(f"⚠️ Failed to open SHORT position for {pair}")
-                    else:
-                        logger.debug(f"📊 {pair} No signal: Ratio {imbalance_ratio:.2f}x (need > {buy_threshold}x or < {sell_threshold}x)")
-                except Exception as trade_error:
-                    logger.error(f"❌ Failed to execute trade for {pair}: {trade_error}", exc_info=True)
+                if imbalance_ratio > 3.0:  # Strong buy pressure
+                    success = await self.open_position(pair, 'long', float(asks[0][0]))
+                    if success:
+                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                elif imbalance_ratio < 0.33:  # Strong sell pressure
+                    success = await self.open_position(pair, 'short', float(bids[0][0]))
+                    if success:
+                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
-                # Only log actual unexpected errors, not API error codes
-                if isinstance(e, (TypeError, KeyError, IndexError, AttributeError)):
-                    logger.debug(f"⚠️ Error processing orderbook data for {pair}: {e}")
-                else:
-                    logger.error(f"❌ Unexpected error analyzing {pair}: {e}", exc_info=True)
+                logger.error(f"Error analyzing {pair}: {e}")
     
     async def run_multi_timeframe_breakout_strategy(self):
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""
@@ -869,9 +632,8 @@ class BotInstance:
                         self.last_position_update_time[pair] = current_time_monitor
                 
                 # Skip trading if in downtrend (after logging market metrics)
-                # NOTE: This filter can be very restrictive - consider making it less strict if missing trades
                 if is_downtrend:
-                    logger.info(f"⏸️ {pair} Skipping trade - Market in downtrend (last 1h candle bearish)")
+                    logger.debug(f"⏸️ {pair} Skipping trade - Market in downtrend")
                     continue  # Skip trading logic, but market metrics already logged above
                 
                 # Only check for new trades if we don't already have a position AND haven't reached max positions
@@ -898,7 +660,7 @@ class BotInstance:
                           f"1h Low: Near={near_low_1h} (L=${low_1h_val:.2f} | Dist: {dist_to_low_1h:+.2f}%) | "
                           f"30m Low: Near={near_low_30m} (L=${low_30m_val:.2f} | Dist: {dist_to_low_30m:+.2f}%) | "
                           f"15m Low: Near={near_low_15m} (L=${low_15m_val:.2f} | Dist: {dist_to_low_15m:+.2f}%) | "
-                          f"Vol: {volume_weight:.2f}x | HasVol: {has_volume} | Downtrend: {is_downtrend}")
+                          f"Vol: {volume_weight:.2f}x | HasVol: {has_volume}")
                 
                 # STRICT DIP-BUYING STRATEGY: ONLY trade lows (support levels)
                 # NO high breakouts - too high risk
@@ -1037,6 +799,13 @@ class BotInstance:
     
     async def run_liquidity_grab_strategy(self):
         """Liquidity Grab Strategy - Buy when price wicks below support then bounces back"""
+        # Throttle: Don't run every second - check every 5 seconds to reduce API calls
+        current_time = datetime.now().timestamp()
+        if current_time - self.last_liquidity_grab_check < self.liquidity_grab_check_interval:
+            return  # Skip this tick, wait for next interval
+        
+        self.last_liquidity_grab_check = current_time
+        
         logger.info(f"🎯 Running Liquidity Grab Strategy | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
         # Check if max positions reached
@@ -1206,318 +975,6 @@ class BotInstance:
             except Exception as e:
                 logger.error(f"❌ Error in liquidity grab analysis for {pair}: {e}", exc_info=True)
                 await self.log('error', f"❌ Error analyzing liquidity grab for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
-    
-    async def run_orderbook_imbalance_v2_strategy(self):
-        """Order Book Imbalance Strategy v2 - Improved version with better entry/exit logic"""
-        # Get strategy parameters with defaults
-        imbalance_threshold = self.strategy.get('imbalance_threshold', 0.7)  # 70% bid volume required
-        depth = self.strategy.get('depth', 10)  # Top 10 order book levels
-        min_hold_time = self.strategy.get('min_hold_time', 30)  # Minimum 30 seconds hold
-        cooldown_period = self.strategy.get('cooldown_period', 60)  # 60 seconds cooldown
-        exit_imbalance_threshold = self.strategy.get('exit_imbalance_threshold', 0.3)  # Exit when <30% bids
-        max_hold_time = min_hold_time * 2  # 2x minimum hold time (default 60 seconds)
-        
-        # Check max positions
-        if len(self.positions) >= self.strategy['max_positions']:
-            return
-        
-        # Get pairs from strategy config (handle both list and string formats)
-        pairs = self.strategy.get('pairs', [])
-        if isinstance(pairs, str):
-            pairs = [pairs]  # Convert single string to list
-        if not pairs:
-            logger.warning(f"⚠️ No pairs configured for orderbook v2 strategy")
-            await self.log('error', f"⚠️ No trading pairs configured for this strategy", {})
-            return
-        
-        logger.info(f"📊 Order Book Imbalance v2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {pairs}")
-        
-        # Log strategy start (only once per bot instance)
-        if not hasattr(self, '_orderbook_v2_started'):
-            pair_list = pairs if isinstance(pairs, list) else [pairs]
-            await self.log('info', f"🚀 Order Book Imbalance v2 Strategy Started | Pairs: {', '.join(pair_list)} | Threshold: {imbalance_threshold*100:.0f}% bids", {})
-            self._orderbook_v2_started = True
-        
-        for pair in pairs:
-            # Ensure we have price data before proceeding
-            if pair not in self.last_prices:
-                logger.warning(f"⚠️ {pair} No price data yet, will retry next tick")
-                await self.log('info', f"⏳ Waiting for price data for {pair}...", {'pair': pair})
-                continue
-            
-            try:
-                current_time = datetime.now().timestamp()
-                current_price = self.last_prices[pair]
-                
-                # Check if we have an open position for this pair
-                has_open_position = any(p['symbol'] == pair for p in self.positions)
-                
-                logger.debug(f"📊 {pair} Processing orderbook v2 | Price: ${current_price:.2f} | Has Position: {has_open_position}")
-                
-                # Get L2 order book snapshot (with caching and rate limiting)
-                try:
-                    l2_data = await self.get_l2_snapshot_cached(pair)
-                    
-                    # Check if we got valid data
-                    if l2_data is None:
-                        logger.debug(f"⚠️ No L2 data available for {pair} (using stale cache or API error)")
-                        # Don't log error spam - just skip this tick
-                        continue
-                    
-                    # Check if API returned error code (shouldn't happen with cached version, but double-check)
-                    if isinstance(l2_data, int):
-                        logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair}")
-                        continue
-                    
-                    if not l2_data or 'levels' not in l2_data:
-                        logger.warning(f"⚠️ Invalid L2 data structure for {pair}: {type(l2_data)}")
-                        await self.log('error', f"⚠️ Invalid orderbook data for {pair}", {'pair': pair, 'data_type': str(type(l2_data))})
-                        continue
-                    
-                    bids = l2_data['levels'][0]  # [[price, size], ...]
-                    asks = l2_data['levels'][1]
-                    
-                    if not bids or not asks or len(bids) == 0 or len(asks) == 0:
-                        logger.warning(f"⚠️ Empty orderbook for {pair}")
-                        await self.log('error', f"⚠️ Empty orderbook for {pair}", {'pair': pair})
-                        continue
-                    
-                    # Calculate order book imbalance (v2 method: ratio 0.0 to 1.0)
-                    bid_volume = sum(float(level[1]) for level in bids[:depth])
-                    ask_volume = sum(float(level[1]) for level in asks[:depth])
-                    total_volume = bid_volume + ask_volume
-                    
-                    if total_volume == 0:
-                        logger.warning(f"⚠️ Zero total volume for {pair}")
-                        await self.log('error', f"⚠️ Zero total volume for {pair}", {'pair': pair})
-                        continue
-                    
-                    imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (0.5 = balanced, >0.5 = more bids)
-                    logger.info(f"📊 {pair} Orderbook fetched | Bid: {bid_volume:.2f} | Ask: {ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.2f}%")
-                except Exception as l2_error:
-                    # Only log error if we don't have cached data to use
-                    if pair not in self.l2_cache:
-                        logger.error(f"❌ Failed to fetch L2 snapshot for {pair}: {l2_error}", exc_info=True)
-                        await self.log('error', f"❌ Failed to fetch orderbook for {pair}: {str(l2_error)}", {'pair': pair, 'error': str(l2_error)})
-                    else:
-                        logger.debug(f"L2 fetch failed for {pair} but using cached data: {l2_error}")
-                    continue
-                
-                # Current price already fetched above
-                
-                # Initialize timers
-                if pair not in self.last_market_metrics_log_time:
-                    self.last_market_metrics_log_time[pair] = 0
-                if pair not in self.last_position_update_time:
-                    self.last_position_update_time[pair] = 0
-                
-                # Calculate order flow metrics
-                buy_pressure_pct = imbalance_ratio * 100
-                sell_pressure_pct = (1 - imbalance_ratio) * 100
-                imbalance_value = imbalance_ratio - 0.5  # -0.5 to +0.5 range
-                
-                # Calculate large orders (orders > 1% of total volume)
-                large_order_threshold = total_volume * 0.01
-                large_buy_orders = sum(1 for level in bids[:depth] if float(level[1]) > large_order_threshold)
-                large_sell_orders = sum(1 for level in asks[:depth] if float(level[1]) > large_order_threshold)
-                large_orders_total = large_buy_orders + large_sell_orders
-                
-                # Calculate cumulative delta (difference between bid and ask volumes)
-                cumulative_delta = bid_volume - ask_volume
-                
-                # Debug logging for trade signals
-                logger.debug(f"📊 {pair} Order Flow: Buy Pressure {buy_pressure_pct:.2f}% | Threshold: {imbalance_threshold*100:.0f}% | Ready: {imbalance_ratio > imbalance_threshold}")
-                
-                # Log Order Flow Analysis every 2 seconds (update in place)
-                if current_time - self.last_position_update_time[pair] >= 2:
-                    try:
-                        if has_open_position:
-                            # Show position status with order flow
-                            pos = next((p for p in self.positions if p['symbol'] == pair), None)
-                            if pos:
-                                entry_price = pos.get('entry_price', current_price)
-                                entry_time = pos.get('created_at', datetime.now().timestamp())
-                                hold_time = current_time - entry_time
-                                pnl = (current_price - entry_price) * pos.get('size', 0)
-                                pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
-                                
-                                message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
-                                message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
-                                message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}\n"
-                                message += f"🟢 OPEN POSITION | Entry: ${entry_price:.2f} | Hold: {int(hold_time)}s | P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%)"
-                                
-                                # Check exit conditions
-                                if imbalance_ratio < exit_imbalance_threshold:
-                                    message += f" | 🔴 EXIT signal (< {exit_imbalance_threshold*100:.0f}% bids)"
-                                elif hold_time > max_hold_time:
-                                    message += f" | ⏰ Max hold time reached"
-                                else:
-                                    message += f" | ⚪ Monitoring exit conditions"
-                            else:
-                                # Fallback if position not found
-                                message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
-                                message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
-                                message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}"
-                        else:
-                            # Monitoring mode - show entry conditions
-                            message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
-                            message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
-                            message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}\n"
-                            
-                            # Check entry conditions
-                            if imbalance_ratio > imbalance_threshold:
-                                message += f"🟢 BUY SIGNAL READY | Imbalance {buy_pressure_pct:.1f}% > {imbalance_threshold*100:.0f}% threshold"
-                            elif imbalance_ratio < exit_imbalance_threshold:
-                                message += f"🔴 SELL SIGNAL READY | Imbalance {buy_pressure_pct:.1f}% < {exit_imbalance_threshold*100:.0f}% threshold"
-                            else:
-                                message += f"⚪ WAITING | Need > {imbalance_threshold*100:.0f}% bids for entry"
-                            
-                            # Check cooldown
-                            last_close_time = self.last_position_close_time.get(pair, 0)
-                            if current_time - last_close_time < cooldown_period:
-                                cooldown_remaining = int(cooldown_period - (current_time - last_close_time))
-                                message += f" | ⏳ Cooldown: {cooldown_remaining}s"
-                        
-                        try:
-                            await self.log_update('monitoring', pair, message, {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'buy_pressure': buy_pressure_pct,
-                                'sell_pressure': sell_pressure_pct,
-                                'imbalance': imbalance_value,
-                                'cumulative_delta': cumulative_delta,
-                                'total_volume': total_volume,
-                                'large_orders': large_orders_total,
-                                'bid_volume': bid_volume,
-                                'ask_volume': ask_volume,
-                                'imbalance_ratio': imbalance_ratio,
-                                'best_bid': float(bids[0][0]),
-                                'best_ask': float(asks[0][0]),
-                                'update_type': 'monitoring'
-                            })
-                            self.last_position_update_time[pair] = current_time
-                            logger.debug(f"✅ Order Flow Analysis logged for {pair}")
-                        except Exception as log_update_error:
-                            logger.error(f"❌ log_update failed for {pair}, using fallback: {log_update_error}", exc_info=True)
-                            # Fallback: create a regular log entry if update fails
-                            await self.log('info', message, {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'buy_pressure': buy_pressure_pct,
-                                'sell_pressure': sell_pressure_pct,
-                                'imbalance': imbalance_value,
-                                'cumulative_delta': cumulative_delta,
-                                'total_volume': total_volume,
-                                'large_orders': large_orders_total,
-                                'imbalance_ratio': imbalance_ratio
-                            })
-                            self.last_position_update_time[pair] = current_time
-                    except Exception as monitor_error:
-                        logger.error(f"❌ Exception in Order Flow Analysis for {pair}: {monitor_error}", exc_info=True)
-                        # Last resort fallback
-                        try:
-                            await self.log('error', f"❌ Order Flow Analysis error for {pair}: {str(monitor_error)}", {
-                                'pair': pair,
-                                'error': str(monitor_error)
-                            })
-                        except Exception as fallback_error:
-                            logger.error(f"❌ Fallback log also failed for {pair}: {fallback_error}")
-                
-                # Log detailed market metrics every 30 seconds (less frequent)
-                if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
-                    try:
-                        message = f"📊 {pair} | ${current_price:.2f} | Order Book: {bid_volume:.2f}/{ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.1f}% bids"
-                        if has_open_position:
-                            pos = next((p for p in self.positions if p['symbol'] == pair), None)
-                            if pos:
-                                entry_time = pos.get('created_at', datetime.now().timestamp())
-                                hold_time = current_time - entry_time
-                                message += f" | Open: Entry ${pos['entry_price']:.2f} | Hold: {int(hold_time)}s"
-                        
-                        await self.log_update('market_metrics', pair, message, {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'bid_volume': bid_volume,
-                            'ask_volume': ask_volume,
-                            'imbalance_ratio': imbalance_ratio,
-                            'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0])
-                        })
-                        self.last_market_metrics_log_time[pair] = current_time
-                    except Exception as log_error:
-                        logger.debug(f"Failed to log market metrics for {pair}: {log_error}")
-                
-                # ENTRY LOGIC: Enter long when imbalance > threshold
-                if not has_open_position:
-                    # Check cooldown period
-                    last_close_time = self.last_position_close_time.get(pair, 0)
-                    if current_time - last_close_time < cooldown_period:
-                        continue  # Still in cooldown
-                    
-                    # Entry condition: imbalance > threshold (default 0.7 = 70%+ bids)
-                    if imbalance_ratio > imbalance_threshold:
-                        # Open position with custom TP/SL for this strategy
-                        # Stop loss: 1% below entry
-                        # Take profit: 2% above entry
-                        original_tp = self.strategy.get('take_profit_percent', 2.0)
-                        original_sl = self.strategy.get('stop_loss_percent', 1.0)
-                        
-                        # Temporarily override TP/SL for this strategy
-                        self.strategy['take_profit_percent'] = 2.0
-                        self.strategy['stop_loss_percent'] = 1.0
-                        
-                        try:
-                            success = await self.open_position(pair, 'long', current_price)
-                            if success:
-                                # Track entry time for minimum hold time enforcement
-                                self.orderbook_v2_entry_times[pair] = current_time
-                                await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - Order Book Imbalance: {imbalance_ratio*100:.1f}% bids (>{imbalance_threshold*100:.0f}%)", {
-                                    'imbalance_ratio': imbalance_ratio,
-                                    'bid_volume': bid_volume,
-                                    'ask_volume': ask_volume
-                                })
-                            else:
-                                logger.warning(f"⚠️ Order book v2 signal triggered but position open failed for {pair}")
-                        except Exception as open_error:
-                            logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
-                        finally:
-                            # Restore original TP/SL
-                            self.strategy['take_profit_percent'] = original_tp
-                            self.strategy['stop_loss_percent'] = original_sl
-                
-                # EXIT LOGIC: Check exit conditions for open positions
-                else:
-                    # Find the open position
-                    position = next((p for p in self.positions if p['symbol'] == pair), None)
-                    if not position:
-                        continue
-                    
-                    entry_time = self.orderbook_v2_entry_times.get(pair, position.get('created_at', current_time))
-                    hold_time = current_time - entry_time
-                    
-                    # Check minimum hold time (must hold at least 30 seconds)
-                    if hold_time < min_hold_time:
-                        continue  # Can't exit yet, minimum hold time not met
-                    
-                    # Exit condition 1: Imbalance reverses (< 0.3 = <30% bids)
-                    if imbalance_ratio < exit_imbalance_threshold:
-                        await self.close_position(position, current_price, "Order Book Reversal")
-                        if pair in self.orderbook_v2_entry_times:
-                            del self.orderbook_v2_entry_times[pair]
-                        continue
-                    
-                    # Exit condition 2: Hold time exceeds max hold time (default 60 seconds)
-                    if hold_time > max_hold_time:
-                        await self.close_position(position, current_price, "Max Hold Time")
-                        if pair in self.orderbook_v2_entry_times:
-                            del self.orderbook_v2_entry_times[pair]
-                        continue
-                    
-                    # Note: Standard TP/SL checks are handled in check_positions()
-                
-            except Exception as e:
-                logger.error(f"❌ Error in orderbook imbalance v2 analysis for {pair}: {e}", exc_info=True)
-                await self.log('error', f"❌ Error analyzing orderbook v2 for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
     
     async def run_default_strategy(self):
         """Default strategy (for testing)"""
@@ -1951,11 +1408,6 @@ class BotInstance:
             if pair in self.liquidity_grab_events:
                 del self.liquidity_grab_events[pair]
                 logger.debug(f"🧹 Cleaned up liquidity grab event for {pair}")
-            
-            # Clean up orderbook v2 entry time tracking
-            if pair in self.orderbook_v2_entry_times:
-                del self.orderbook_v2_entry_times[pair]
-                logger.debug(f"🧹 Cleaned up orderbook v2 entry time for {pair}")
             
             # Delete the position status log (it will be replaced with monitoring log)
             if pair in self.position_log_ids:

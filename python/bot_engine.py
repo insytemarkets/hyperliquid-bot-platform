@@ -1071,6 +1071,10 @@ class BotInstance:
             self._orderbook_v2_started = True
         
         for pair in self.strategy['pairs']:
+            # Ensure we have price data before proceeding
+            if pair not in self.last_prices:
+                logger.debug(f"⚠️ {pair} No price data yet, will retry next tick")
+                continue
             try:
                 current_time = datetime.now().timestamp()
                 
@@ -1111,6 +1115,7 @@ class BotInstance:
                 
                 # Get current price
                 if pair not in self.last_prices:
+                    logger.debug(f"⚠️ {pair} No price data yet, skipping Order Flow Analysis")
                     continue
                 current_price = self.last_prices[pair]
                 
@@ -1133,6 +1138,9 @@ class BotInstance:
                 
                 # Calculate cumulative delta (difference between bid and ask volumes)
                 cumulative_delta = bid_volume - ask_volume
+                
+                # Debug logging for trade signals
+                logger.debug(f"📊 {pair} Order Flow: Buy Pressure {buy_pressure_pct:.2f}% | Threshold: {imbalance_threshold*100:.0f}% | Ready: {imbalance_ratio > imbalance_threshold}")
                 
                 # Log Order Flow Analysis every 2 seconds (update in place)
                 if current_time - self.last_position_update_time[pair] >= 2:
@@ -1202,7 +1210,17 @@ class BotInstance:
                         })
                         self.last_position_update_time[pair] = current_time
                     except Exception as monitor_error:
-                        logger.debug(f"Failed to log order flow analysis for {pair}: {monitor_error}")
+                        logger.error(f"❌ Exception logging order flow analysis for {pair}: {monitor_error}", exc_info=True)
+                        # Fallback: create a regular log entry if update fails
+                        try:
+                            await self.log('info', message, {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'buy_pressure': buy_pressure_pct,
+                                'imbalance_ratio': imbalance_ratio
+                            })
+                        except Exception as fallback_error:
+                            logger.error(f"❌ Fallback log also failed for {pair}: {fallback_error}")
                 
                 # Log detailed market metrics every 30 seconds (less frequent)
                 if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:

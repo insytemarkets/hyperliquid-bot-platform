@@ -1073,13 +1073,18 @@ class BotInstance:
         for pair in self.strategy['pairs']:
             # Ensure we have price data before proceeding
             if pair not in self.last_prices:
-                logger.debug(f"⚠️ {pair} No price data yet, will retry next tick")
+                logger.warning(f"⚠️ {pair} No price data yet, will retry next tick")
+                await self.log('info', f"⏳ Waiting for price data for {pair}...", {'pair': pair})
                 continue
+            
             try:
                 current_time = datetime.now().timestamp()
+                current_price = self.last_prices[pair]
                 
                 # Check if we have an open position for this pair
                 has_open_position = any(p['symbol'] == pair for p in self.positions)
+                
+                logger.debug(f"📊 {pair} Processing orderbook v2 | Price: ${current_price:.2f} | Has Position: {has_open_position}")
                 
                 # Get L2 order book snapshot
                 try:
@@ -1087,17 +1092,21 @@ class BotInstance:
                     
                     # Check if API returned error code instead of data
                     if isinstance(l2_data, int):
-                        logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair}")
+                        logger.warning(f"⚠️ L2 API returned error code {l2_data} for {pair}")
+                        await self.log('error', f"⚠️ Orderbook API error for {pair}: Code {l2_data}", {'pair': pair, 'error_code': l2_data})
                         continue
                     
                     if not l2_data or 'levels' not in l2_data:
-                        logger.debug(f"⚠️ Invalid L2 data structure for {pair}")
+                        logger.warning(f"⚠️ Invalid L2 data structure for {pair}: {type(l2_data)}")
+                        await self.log('error', f"⚠️ Invalid orderbook data for {pair}", {'pair': pair, 'data_type': str(type(l2_data))})
                         continue
                     
                     bids = l2_data['levels'][0]  # [[price, size], ...]
                     asks = l2_data['levels'][1]
                     
                     if not bids or not asks or len(bids) == 0 or len(asks) == 0:
+                        logger.warning(f"⚠️ Empty orderbook for {pair}")
+                        await self.log('error', f"⚠️ Empty orderbook for {pair}", {'pair': pair})
                         continue
                     
                     # Calculate order book imbalance (v2 method: ratio 0.0 to 1.0)
@@ -1106,18 +1115,18 @@ class BotInstance:
                     total_volume = bid_volume + ask_volume
                     
                     if total_volume == 0:
+                        logger.warning(f"⚠️ Zero total volume for {pair}")
+                        await self.log('error', f"⚠️ Zero total volume for {pair}", {'pair': pair})
                         continue
                     
                     imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (0.5 = balanced, >0.5 = more bids)
+                    logger.info(f"📊 {pair} Orderbook fetched | Bid: {bid_volume:.2f} | Ask: {ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.2f}%")
                 except Exception as l2_error:
-                    logger.debug(f"⚠️ Failed to fetch L2 snapshot for {pair}: {l2_error}")
+                    logger.error(f"❌ Failed to fetch L2 snapshot for {pair}: {l2_error}", exc_info=True)
+                    await self.log('error', f"❌ Failed to fetch orderbook for {pair}: {str(l2_error)}", {'pair': pair, 'error': str(l2_error)})
                     continue
                 
-                # Get current price
-                if pair not in self.last_prices:
-                    logger.debug(f"⚠️ {pair} No price data yet, skipping Order Flow Analysis")
-                    continue
-                current_price = self.last_prices[pair]
+                # Current price already fetched above
                 
                 # Initialize timers
                 if pair not in self.last_market_metrics_log_time:
@@ -1192,32 +1201,47 @@ class BotInstance:
                                 cooldown_remaining = int(cooldown_period - (current_time - last_close_time))
                                 message += f" | ⏳ Cooldown: {cooldown_remaining}s"
                         
-                        await self.log_update('monitoring', pair, message, {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'buy_pressure': buy_pressure_pct,
-                            'sell_pressure': sell_pressure_pct,
-                            'imbalance': imbalance_value,
-                            'cumulative_delta': cumulative_delta,
-                            'total_volume': total_volume,
-                            'large_orders': large_orders_total,
-                            'bid_volume': bid_volume,
-                            'ask_volume': ask_volume,
-                            'imbalance_ratio': imbalance_ratio,
-                            'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0]),
-                            'update_type': 'monitoring'
-                        })
-                        self.last_position_update_time[pair] = current_time
-                    except Exception as monitor_error:
-                        logger.error(f"❌ Exception logging order flow analysis for {pair}: {monitor_error}", exc_info=True)
-                        # Fallback: create a regular log entry if update fails
                         try:
+                            await self.log_update('monitoring', pair, message, {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'buy_pressure': buy_pressure_pct,
+                                'sell_pressure': sell_pressure_pct,
+                                'imbalance': imbalance_value,
+                                'cumulative_delta': cumulative_delta,
+                                'total_volume': total_volume,
+                                'large_orders': large_orders_total,
+                                'bid_volume': bid_volume,
+                                'ask_volume': ask_volume,
+                                'imbalance_ratio': imbalance_ratio,
+                                'best_bid': float(bids[0][0]),
+                                'best_ask': float(asks[0][0]),
+                                'update_type': 'monitoring'
+                            })
+                            self.last_position_update_time[pair] = current_time
+                            logger.debug(f"✅ Order Flow Analysis logged for {pair}")
+                        except Exception as log_update_error:
+                            logger.error(f"❌ log_update failed for {pair}, using fallback: {log_update_error}", exc_info=True)
+                            # Fallback: create a regular log entry if update fails
                             await self.log('info', message, {
                                 'pair': pair,
                                 'current_price': current_price,
                                 'buy_pressure': buy_pressure_pct,
+                                'sell_pressure': sell_pressure_pct,
+                                'imbalance': imbalance_value,
+                                'cumulative_delta': cumulative_delta,
+                                'total_volume': total_volume,
+                                'large_orders': large_orders_total,
                                 'imbalance_ratio': imbalance_ratio
+                            })
+                            self.last_position_update_time[pair] = current_time
+                    except Exception as monitor_error:
+                        logger.error(f"❌ Exception in Order Flow Analysis for {pair}: {monitor_error}", exc_info=True)
+                        # Last resort fallback
+                        try:
+                            await self.log('error', f"❌ Order Flow Analysis error for {pair}: {str(monitor_error)}", {
+                                'pair': pair,
+                                'error': str(monitor_error)
                             })
                         except Exception as fallback_error:
                             logger.error(f"❌ Fallback log also failed for {pair}: {fallback_error}")

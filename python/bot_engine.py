@@ -1120,33 +1120,91 @@ class BotInstance:
                 if pair not in self.last_position_update_time:
                     self.last_position_update_time[pair] = 0
                 
-                # Log monitoring status when no position (every 5 seconds)
-                if not has_open_position:
-                    if current_time - self.last_position_update_time[pair] >= 5:
-                        try:
-                            message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | Order Book Imbalance: {imbalance_ratio*100:.1f}% bids"
-                            if imbalance_ratio > imbalance_threshold:
-                                message += f" | 🔴 BUY signal ready (> {imbalance_threshold*100:.0f}%)"
-                            elif imbalance_ratio < exit_imbalance_threshold:
-                                message += f" | 🔴 SELL signal ready (< {exit_imbalance_threshold*100:.0f}%)"
-                            else:
-                                message += f" | ⚪ Waiting for imbalance (> {imbalance_threshold*100:.0f}% or < {exit_imbalance_threshold*100:.0f}%)"
-                            
-                            await self.log_update('monitoring', pair, message, {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'bid_volume': bid_volume,
-                                'ask_volume': ask_volume,
-                                'imbalance_ratio': imbalance_ratio,
-                                'best_bid': float(bids[0][0]),
-                                'best_ask': float(asks[0][0]),
-                                'update_type': 'monitoring'
-                            })
-                            self.last_position_update_time[pair] = current_time
-                        except Exception as monitor_error:
-                            logger.debug(f"Failed to log monitoring for {pair}: {monitor_error}")
+                # Calculate order flow metrics
+                buy_pressure_pct = imbalance_ratio * 100
+                sell_pressure_pct = (1 - imbalance_ratio) * 100
+                imbalance_value = imbalance_ratio - 0.5  # -0.5 to +0.5 range
                 
-                # Log market metrics every 30 seconds
+                # Calculate large orders (orders > 1% of total volume)
+                large_order_threshold = total_volume * 0.01
+                large_buy_orders = sum(1 for level in bids[:depth] if float(level[1]) > large_order_threshold)
+                large_sell_orders = sum(1 for level in asks[:depth] if float(level[1]) > large_order_threshold)
+                large_orders_total = large_buy_orders + large_sell_orders
+                
+                # Calculate cumulative delta (difference between bid and ask volumes)
+                cumulative_delta = bid_volume - ask_volume
+                
+                # Log Order Flow Analysis every 2 seconds (update in place)
+                if current_time - self.last_position_update_time[pair] >= 2:
+                    try:
+                        if has_open_position:
+                            # Show position status with order flow
+                            pos = next((p for p in self.positions if p['symbol'] == pair), None)
+                            if pos:
+                                entry_price = pos.get('entry_price', current_price)
+                                entry_time = pos.get('created_at', datetime.now().timestamp())
+                                hold_time = current_time - entry_time
+                                pnl = (current_price - entry_price) * pos.get('size', 0)
+                                pnl_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                                
+                                message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
+                                message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
+                                message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}\n"
+                                message += f"🟢 OPEN POSITION | Entry: ${entry_price:.2f} | Hold: {int(hold_time)}s | P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%)"
+                                
+                                # Check exit conditions
+                                if imbalance_ratio < exit_imbalance_threshold:
+                                    message += f" | 🔴 EXIT signal (< {exit_imbalance_threshold*100:.0f}% bids)"
+                                elif hold_time > max_hold_time:
+                                    message += f" | ⏰ Max hold time reached"
+                                else:
+                                    message += f" | ⚪ Monitoring exit conditions"
+                            else:
+                                # Fallback if position not found
+                                message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
+                                message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
+                                message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}"
+                        else:
+                            # Monitoring mode - show entry conditions
+                            message = f"📊 Order Flow Analysis | {pair} | Price: ${current_price:.2f}\n"
+                            message += f"Buy Pressure: {buy_pressure_pct:.2f}% | Sell Pressure: {sell_pressure_pct:.2f}% | Imbalance: {imbalance_value:+.4f}\n"
+                            message += f"Cumulative Delta: {cumulative_delta:+.2f} | Total Volume: {total_volume:.2f} | Large Orders: {large_orders_total}\n"
+                            
+                            # Check entry conditions
+                            if imbalance_ratio > imbalance_threshold:
+                                message += f"🟢 BUY SIGNAL READY | Imbalance {buy_pressure_pct:.1f}% > {imbalance_threshold*100:.0f}% threshold"
+                            elif imbalance_ratio < exit_imbalance_threshold:
+                                message += f"🔴 SELL SIGNAL READY | Imbalance {buy_pressure_pct:.1f}% < {exit_imbalance_threshold*100:.0f}% threshold"
+                            else:
+                                message += f"⚪ WAITING | Need > {imbalance_threshold*100:.0f}% bids for entry"
+                            
+                            # Check cooldown
+                            last_close_time = self.last_position_close_time.get(pair, 0)
+                            if current_time - last_close_time < cooldown_period:
+                                cooldown_remaining = int(cooldown_period - (current_time - last_close_time))
+                                message += f" | ⏳ Cooldown: {cooldown_remaining}s"
+                        
+                        await self.log_update('monitoring', pair, message, {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'buy_pressure': buy_pressure_pct,
+                            'sell_pressure': sell_pressure_pct,
+                            'imbalance': imbalance_value,
+                            'cumulative_delta': cumulative_delta,
+                            'total_volume': total_volume,
+                            'large_orders': large_orders_total,
+                            'bid_volume': bid_volume,
+                            'ask_volume': ask_volume,
+                            'imbalance_ratio': imbalance_ratio,
+                            'best_bid': float(bids[0][0]),
+                            'best_ask': float(asks[0][0]),
+                            'update_type': 'monitoring'
+                        })
+                        self.last_position_update_time[pair] = current_time
+                    except Exception as monitor_error:
+                        logger.debug(f"Failed to log order flow analysis for {pair}: {monitor_error}")
+                
+                # Log detailed market metrics every 30 seconds (less frequent)
                 if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
                     try:
                         message = f"📊 {pair} | ${current_price:.2f} | Order Book: {bid_volume:.2f}/{ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.1f}% bids"

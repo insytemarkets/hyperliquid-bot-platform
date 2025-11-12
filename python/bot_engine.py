@@ -13,6 +13,7 @@ from loguru import logger
 from supabase import create_client, Client
 from hyperliquid.info import Info
 from dotenv import load_dotenv
+import aiohttp
 
 # Load environment variables
 load_dotenv()
@@ -205,7 +206,45 @@ class BotInstance:
             current_time = datetime.now().timestamp()
         
         try:
-            l2_data = info.l2_snapshot(pair)
+            # Try different method names - Python SDK might use different naming
+            l2_data = None
+            
+            # Try l2_book method (snake_case)
+            if hasattr(info, 'l2_book'):
+                try:
+                    l2_data = info.l2_book(pair)
+                except:
+                    pass
+            
+            # Try l2Book method (camelCase)
+            if l2_data is None and hasattr(info, 'l2Book'):
+                try:
+                    l2_data = info.l2Book(pair)
+                except:
+                    pass
+            
+            # Try l2_snapshot method (current)
+            if l2_data is None:
+                try:
+                    l2_data = info.l2_snapshot(pair)
+                except:
+                    pass
+            
+            # Fallback: Direct API call if SDK methods fail
+            if l2_data is None or isinstance(l2_data, int):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            'https://api.hyperliquid.xyz/info',
+                            json={'type': 'l2Book', 'coin': pair},
+                            headers={'Content-Type': 'application/json'}
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data and len(data) > 0:
+                                    l2_data = data[0]  # Returns { coin, levels: [[price, size], ...], time }
+                except Exception as api_error:
+                    logger.debug(f"Direct API call also failed for {pair}: {api_error}")
             
             # Check if API returned error code
             if isinstance(l2_data, int):
@@ -216,6 +255,19 @@ class BotInstance:
                 # Return cached data if available, even if expired
                 if pair in self.l2_cache:
                     logger.debug(f"Using stale L2 cache for {pair} due to API error")
+                    return self.l2_cache[pair]
+                return None
+            
+            # Validate data structure
+            if not l2_data or not isinstance(l2_data, dict):
+                logger.debug(f"Invalid L2 data type for {pair}: {type(l2_data)}")
+                if pair in self.l2_cache:
+                    return self.l2_cache[pair]
+                return None
+            
+            if 'levels' not in l2_data:
+                logger.debug(f"L2 data missing 'levels' key for {pair}")
+                if pair in self.l2_cache:
                     return self.l2_cache[pair]
                 return None
             

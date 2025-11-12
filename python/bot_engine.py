@@ -213,27 +213,43 @@ class BotInstance:
             if hasattr(info, 'l2_book'):
                 try:
                     l2_data = info.l2_book(pair)
-                except:
-                    pass
+                    # Check if it returned an error code
+                    if isinstance(l2_data, int):
+                        logger.debug(f"SDK l2_book returned error code {l2_data} for {pair}")
+                        l2_data = None  # Reset to None so fallback is tried
+                except Exception as sdk_error:
+                    logger.debug(f"SDK l2_book raised exception for {pair}: {sdk_error}")
+                    l2_data = None
             
             # Try l2Book method (camelCase)
             if l2_data is None and hasattr(info, 'l2Book'):
                 try:
                     l2_data = info.l2Book(pair)
-                except:
-                    pass
+                    # Check if it returned an error code
+                    if isinstance(l2_data, int):
+                        logger.debug(f"SDK l2Book returned error code {l2_data} for {pair}")
+                        l2_data = None  # Reset to None so fallback is tried
+                except Exception as sdk_error:
+                    logger.debug(f"SDK l2Book raised exception for {pair}: {sdk_error}")
+                    l2_data = None
             
             # Try l2_snapshot method (current)
             if l2_data is None:
                 try:
                     l2_data = info.l2_snapshot(pair)
-                except:
-                    pass
+                    # Check if it returned an error code
+                    if isinstance(l2_data, int):
+                        logger.debug(f"SDK l2_snapshot returned error code {l2_data} for {pair}")
+                        l2_data = None  # Reset to None so fallback is tried
+                except Exception as sdk_error:
+                    logger.debug(f"SDK l2_snapshot raised exception for {pair}: {sdk_error}")
+                    l2_data = None
             
-            # Fallback: Direct API call if SDK methods fail
+            # Fallback: Direct API call if SDK methods fail or return error codes
             if l2_data is None or isinstance(l2_data, int):
                 try:
-                    async with aiohttp.ClientSession() as session:
+                    logger.info(f"🔄 SDK returned error code {l2_data if isinstance(l2_data, int) else 'None'} for {pair}, trying direct API call...")
+                    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
                         async with session.post(
                             'https://api.hyperliquid.xyz/info',
                             json={'type': 'l2Book', 'coin': pair},
@@ -241,10 +257,18 @@ class BotInstance:
                         ) as response:
                             if response.status == 200:
                                 data = await response.json()
-                                if data and len(data) > 0:
+                                if data and len(data) > 0 and isinstance(data[0], dict):
                                     l2_data = data[0]  # Returns { coin, levels: [[price, size], ...], time }
+                                    logger.info(f"✅ Direct API call succeeded for {pair}")
+                                else:
+                                    logger.warning(f"⚠️ Direct API returned invalid data structure for {pair}: {type(data)}")
+                            else:
+                                response_text = await response.text()
+                                logger.warning(f"⚠️ Direct API returned status {response.status} for {pair}: {response_text[:100]}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"⚠️ Direct API call timed out for {pair}")
                 except Exception as api_error:
-                    logger.debug(f"Direct API call also failed for {pair}: {api_error}")
+                    logger.warning(f"⚠️ Direct API call failed for {pair}: {api_error}")
             
             # Check if API returned error code
             if isinstance(l2_data, int):
@@ -1271,8 +1295,12 @@ class BotInstance:
                     imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (0.5 = balanced, >0.5 = more bids)
                     logger.info(f"📊 {pair} Orderbook fetched | Bid: {bid_volume:.2f} | Ask: {ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.2f}%")
                 except Exception as l2_error:
-                    logger.error(f"❌ Failed to fetch L2 snapshot for {pair}: {l2_error}", exc_info=True)
-                    await self.log('error', f"❌ Failed to fetch orderbook for {pair}: {str(l2_error)}", {'pair': pair, 'error': str(l2_error)})
+                    # Only log error if we don't have cached data to use
+                    if pair not in self.l2_cache:
+                        logger.error(f"❌ Failed to fetch L2 snapshot for {pair}: {l2_error}", exc_info=True)
+                        await self.log('error', f"❌ Failed to fetch orderbook for {pair}: {str(l2_error)}", {'pair': pair, 'error': str(l2_error)})
+                    else:
+                        logger.debug(f"L2 fetch failed for {pair} but using cached data: {l2_error}")
                     continue
                 
                 # Current price already fetched above

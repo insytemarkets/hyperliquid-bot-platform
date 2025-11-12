@@ -296,19 +296,19 @@ class BotInstance:
                 
                 # Check if API returned error code instead of data
                 if isinstance(l2_data, int):
-                    logger.warning(f"❌ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
-                    await self.log('info', f"⚠️ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
-                    continue
+                    logger.debug(f"⚠️ L2 API returned error code {l2_data} for {pair} - skipping")
+                    continue  # Skip this pair, no error logged
                     
-                if not l2_data or 'levels' not in l2_data:
-                    logger.warning(f"Invalid L2 data structure for {pair}: {l2_data}")
-                    continue
+                if not l2_data or not isinstance(l2_data, dict) or 'levels' not in l2_data:
+                    logger.debug(f"⚠️ Invalid L2 data structure for {pair}: {type(l2_data)}")
+                    continue  # Skip this pair, no error logged
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]
                 asks = l2_data['levels'][1]
                 
-                if not bids or not asks:
-                    continue
+                if not bids or not asks or len(bids) == 0 or len(asks) == 0:
+                    logger.debug(f"⚠️ Empty order book for {pair}")
+                    continue  # Skip this pair, no error logged
                 
                 # Calculate order book imbalance
                 bid_depth = sum(float(level[1]) for level in bids[:10])
@@ -316,39 +316,50 @@ class BotInstance:
                 
                 total_depth = bid_depth + ask_depth
                 if total_depth == 0:
-                    continue
+                    logger.debug(f"⚠️ Zero total depth for {pair}")
+                    continue  # Skip this pair, no error logged
                 
                 imbalance_ratio = bid_depth / ask_depth if ask_depth > 0 else 0
                 
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                    await self.log(
-                        'market_data',
-                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                        {
-                            'pair': pair,
-                            'bid_depth': bid_depth,
-                            'ask_depth': ask_depth,
-                            'imbalance_ratio': imbalance_ratio,
-                            'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0])
-                        }
-                    )
-                    self.last_analysis_log_time = current_time
+                    try:
+                        await self.log(
+                            'market_data',
+                            f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                            {
+                                'pair': pair,
+                                'bid_depth': bid_depth,
+                                'ask_depth': ask_depth,
+                                'imbalance_ratio': imbalance_ratio,
+                                'best_bid': float(bids[0][0]),
+                                'best_ask': float(asks[0][0])
+                            }
+                        )
+                        self.last_analysis_log_time = current_time
+                    except Exception as log_error:
+                        logger.debug(f"Failed to log market data for {pair}: {log_error}")
                 
                 # Entry signals
-                if imbalance_ratio > 3.0:  # Strong buy pressure
-                    success = await self.open_position(pair, 'long', float(asks[0][0]))
-                    if success:
-                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
-                elif imbalance_ratio < 0.33:  # Strong sell pressure
-                    success = await self.open_position(pair, 'short', float(bids[0][0]))
-                    if success:
-                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                try:
+                    if imbalance_ratio > 3.0:  # Strong buy pressure
+                        success = await self.open_position(pair, 'long', float(asks[0][0]))
+                        if success:
+                            await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                    elif imbalance_ratio < 0.33:  # Strong sell pressure
+                        success = await self.open_position(pair, 'short', float(bids[0][0]))
+                        if success:
+                            await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                except Exception as trade_error:
+                    logger.warning(f"⚠️ Failed to execute trade for {pair}: {trade_error}")
                     
             except Exception as e:
-                logger.error(f"Error analyzing {pair}: {e}")
+                # Only log actual unexpected errors, not API error codes
+                if isinstance(e, (TypeError, KeyError, IndexError, AttributeError)):
+                    logger.debug(f"⚠️ Error processing orderbook data for {pair}: {e}")
+                else:
+                    logger.error(f"❌ Unexpected error analyzing {pair}: {e}", exc_info=True)
     
     async def run_multi_timeframe_breakout_strategy(self):
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""

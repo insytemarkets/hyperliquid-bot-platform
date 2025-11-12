@@ -279,9 +279,15 @@ class BotInstance:
         
         logger.info(f"📊 Order Book Imbalance | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
+        # Log strategy start (only once per bot instance)
+        if not hasattr(self, '_orderbook_v1_started'):
+            await self.log('info', f"🚀 Order Book Imbalance Strategy Started | Pairs: {', '.join(self.strategy['pairs'])} | Buy Threshold: {buy_threshold}x | Sell Threshold: {sell_threshold}x", {})
+            self._orderbook_v1_started = True
+        
         for pair in self.strategy['pairs']:
             # Skip if already have position
-            if any(p['symbol'] == pair for p in self.positions):
+            has_open_position = any(p['symbol'] == pair for p in self.positions)
+            if has_open_position:
                 continue
             
             # Get L2 order book
@@ -324,11 +330,40 @@ class BotInstance:
                 
                 current_price = self.last_prices[pair]
                 
-                # Log order book analysis (only every 30 seconds to avoid spam)
+                # Initialize timers
                 current_time = datetime.now().timestamp()
                 if pair not in self.last_market_metrics_log_time:
                     self.last_market_metrics_log_time[pair] = 0
+                if pair not in self.last_position_update_time:
+                    self.last_position_update_time[pair] = 0
                 
+                # Log monitoring status when no position (every 5 seconds)
+                if not has_open_position:
+                    if current_time - self.last_position_update_time[pair] >= 5:
+                        try:
+                            message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | Order Book Ratio: {imbalance_ratio:.2f}x"
+                            if imbalance_ratio > buy_threshold:
+                                message += f" | 🔴 BUY signal ready (> {buy_threshold}x)"
+                            elif imbalance_ratio < sell_threshold:
+                                message += f" | 🔴 SELL signal ready (< {sell_threshold}x)"
+                            else:
+                                message += f" | ⚪ Waiting for imbalance (> {buy_threshold}x or < {sell_threshold}x)"
+                            
+                            await self.log_update('monitoring', pair, message, {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'bid_depth': bid_depth,
+                                'ask_depth': ask_depth,
+                                'imbalance_ratio': imbalance_ratio,
+                                'best_bid': float(bids[0][0]),
+                                'best_ask': float(asks[0][0]),
+                                'update_type': 'monitoring'
+                            })
+                            self.last_position_update_time[pair] = current_time
+                        except Exception as monitor_error:
+                            logger.debug(f"Failed to log monitoring for {pair}: {monitor_error}")
+                
+                # Log market metrics every 30 seconds
                 if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
                     try:
                         message = f"📊 {pair} | ${current_price:.2f} | Order Book: Bid {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) / Ask {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x"
@@ -1030,6 +1065,11 @@ class BotInstance:
         
         logger.info(f"📊 Order Book Imbalance v2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
+        # Log strategy start (only once per bot instance)
+        if not hasattr(self, '_orderbook_v2_started'):
+            await self.log('info', f"🚀 Order Book Imbalance v2 Strategy Started | Pairs: {', '.join(self.strategy['pairs'])} | Threshold: {imbalance_threshold*100:.0f}% bids", {})
+            self._orderbook_v2_started = True
+        
         for pair in self.strategy['pairs']:
             try:
                 current_time = datetime.now().timestamp()
@@ -1074,10 +1114,39 @@ class BotInstance:
                     continue
                 current_price = self.last_prices[pair]
                 
-                # Log market metrics every 30 seconds
+                # Initialize timers
                 if pair not in self.last_market_metrics_log_time:
                     self.last_market_metrics_log_time[pair] = 0
+                if pair not in self.last_position_update_time:
+                    self.last_position_update_time[pair] = 0
                 
+                # Log monitoring status when no position (every 5 seconds)
+                if not has_open_position:
+                    if current_time - self.last_position_update_time[pair] >= 5:
+                        try:
+                            message = f"👁️ Monitoring {pair} | Price: ${current_price:.2f} | Order Book Imbalance: {imbalance_ratio*100:.1f}% bids"
+                            if imbalance_ratio > imbalance_threshold:
+                                message += f" | 🔴 BUY signal ready (> {imbalance_threshold*100:.0f}%)"
+                            elif imbalance_ratio < exit_imbalance_threshold:
+                                message += f" | 🔴 SELL signal ready (< {exit_imbalance_threshold*100:.0f}%)"
+                            else:
+                                message += f" | ⚪ Waiting for imbalance (> {imbalance_threshold*100:.0f}% or < {exit_imbalance_threshold*100:.0f}%)"
+                            
+                            await self.log_update('monitoring', pair, message, {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'bid_volume': bid_volume,
+                                'ask_volume': ask_volume,
+                                'imbalance_ratio': imbalance_ratio,
+                                'best_bid': float(bids[0][0]),
+                                'best_ask': float(asks[0][0]),
+                                'update_type': 'monitoring'
+                            })
+                            self.last_position_update_time[pair] = current_time
+                        except Exception as monitor_error:
+                            logger.debug(f"Failed to log monitoring for {pair}: {monitor_error}")
+                
+                # Log market metrics every 30 seconds
                 if current_time - self.last_market_metrics_log_time[pair] >= self.market_log_interval:
                     try:
                         message = f"📊 {pair} | ${current_price:.2f} | Order Book: {bid_volume:.2f}/{ask_volume:.2f} | Imbalance: {imbalance_ratio*100:.1f}% bids"

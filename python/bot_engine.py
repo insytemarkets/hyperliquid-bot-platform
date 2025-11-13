@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 import json
+import requests
 from loguru import logger
 from supabase import create_client, Client
 from hyperliquid.info import Info
@@ -29,6 +30,31 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Initialize Hyperliquid (use mainnet by default, skip websocket for now)
 info = Info(skip_ws=True)
+
+# Hyperliquid API base URL
+HYPERLIQUID_API_URL = "https://api.hyperliquid.xyz/info"
+
+def fetch_l2_orderbook(coin: str) -> Optional[dict]:
+    """Fetch L2 orderbook directly from Hyperliquid API (Python SDK doesn't have l2_book method)"""
+    try:
+        response = requests.post(
+            HYPERLIQUID_API_URL,
+            headers={'Content-Type': 'application/json'},
+            json={'type': 'l2Book', 'coin': coin},
+            timeout=5
+        )
+        
+        if not response.ok:
+            logger.warning(f"⚠️ L2 API request failed for {coin}: HTTP {response.status_code}")
+            return None
+        
+        data = response.json()
+        if data and len(data) > 0:
+            return data[0]  # Returns { coin, levels: [[price, size], ...], time }
+        return None
+    except Exception as e:
+        logger.error(f"❌ Error fetching L2 orderbook for {coin}: {e}")
+        return None
 
 logger.info("🚀 Bot Engine Starting...")
 
@@ -288,18 +314,14 @@ class BotInstance:
             # Get L2 order book
             try:
                 logger.debug(f"Fetching L2 orderbook for {pair}...")
-                # Use l2_book method (matches TypeScript SDK) - pass coin as dict
-                l2_data = info.l2_book({'coin': pair})
-                logger.debug(f"L2 response type: {type(l2_data)}, value: {l2_data}")
+                l2_data = fetch_l2_orderbook(pair)
                 
-                # Check if API returned error code instead of data
-                if isinstance(l2_data, int):
-                    logger.warning(f"❌ L2 API returned error code {l2_data} for {pair} - skipping orderbook strategy")
-                    await self.log('info', f"⚠️ Orderbook data unavailable for {pair}, using momentum strategy instead", {})
+                if not l2_data:
+                    logger.warning(f"⚠️ Failed to fetch orderbook for {pair}")
                     continue
                     
-                if not l2_data or 'levels' not in l2_data:
-                    logger.warning(f"Invalid L2 data structure for {pair}: {l2_data}")
+                if 'levels' not in l2_data:
+                    logger.warning(f"⚠️ Invalid L2 data structure for {pair}: Missing 'levels' key. Keys: {list(l2_data.keys()) if isinstance(l2_data, dict) else 'N/A'}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]
@@ -363,26 +385,26 @@ class BotInstance:
         
         logger.info(f"🔍 Orderbook Imbalance V2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
-        for pair in self.strategy['pairs']:
+        for pair_raw in self.strategy['pairs']:
+            # Normalize pair to Hyperliquid format (e.g., "BTC" not "BTCUSDT")
+            pair = pair_raw.upper().replace('USDT', '').replace('USD', '') if isinstance(pair_raw, str) else str(pair_raw).upper()
+            logger.debug(f"📋 Processing pair: {pair} (raw: {pair_raw}, from strategy: {self.strategy['pairs']})")
+            
             # Skip if already have position (exit logic is handled in check_positions)
-            has_open_position = any(p['symbol'] == pair for p in self.positions)
+            # Check both normalized and raw pair for position matching
+            has_open_position = any(p['symbol'] == pair or p['symbol'] == pair_raw for p in self.positions)
             
             # Get L2 order book (always fetch, even during cooldown, for exit checks)
             try:
                 logger.debug(f"📖 Fetching orderbook for {pair}...")
-                # Use l2_book method (matches TypeScript SDK) - pass coin as dict
-                l2_data = info.l2_book({'coin': pair})
-                
-                if isinstance(l2_data, int):
-                    logger.warning(f"⚠️ {pair} L2 API returned error code: {l2_data}")
-                    continue
+                l2_data = fetch_l2_orderbook(pair)
                 
                 if not l2_data:
-                    logger.warning(f"⚠️ {pair} L2 API returned None/empty")
+                    logger.warning(f"⚠️ {pair} Failed to fetch orderbook")
                     continue
                 
                 if 'levels' not in l2_data:
-                    logger.warning(f"⚠️ {pair} L2 data missing 'levels' key. Data: {type(l2_data)}, Keys: {l2_data.keys() if hasattr(l2_data, 'keys') else 'N/A'}")
+                    logger.warning(f"⚠️ {pair} L2 data missing 'levels' key. Keys: {list(l2_data.keys()) if isinstance(l2_data, dict) else 'N/A'}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]

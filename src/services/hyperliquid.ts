@@ -544,10 +544,23 @@ class HyperliquidService {
         '1d': { startTime: endTime - (200 * 24 * 60 * 60 * 1000), limit: 200 },
       };
 
-      // Fetch candles for all timeframes in parallel
-      const promises = timeframes.map(async (tf) => {
+      // Fetch candles sequentially with delays to prevent rate limits
+      // (Candles are historical data, so parallel fetching isn't critical)
+      const responses: Array<{ tf: string; candles: any[] }> = [];
+      
+      for (let i = 0; i < timeframes.length; i++) {
+        const tf = timeframes[i];
         const config = timeframeConfig[tf];
-        if (!config) return { tf, candles: [] };
+        
+        // Add delay between requests (except first one)
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
+        }
+
+        if (!config) {
+          responses.push({ tf, candles: [] });
+          continue;
+        }
 
         try {
           const candles = await this.getCandleSnapshot(
@@ -556,14 +569,12 @@ class HyperliquidService {
             config.startTime,
             endTime
           );
-          return { tf, candles: candles || [] };
+          responses.push({ tf, candles: Array.isArray(candles) ? candles : [] });
         } catch (error) {
           console.error(`Error fetching ${tf} candles for ${coin}:`, error);
-          return { tf, candles: [] };
+          responses.push({ tf, candles: [] });
         }
-      });
-
-      const responses = await Promise.all(promises);
+      }
 
       responses.forEach(({ tf, candles }) => {
         results[tf] = candles;

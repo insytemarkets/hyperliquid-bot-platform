@@ -315,7 +315,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
         
         // Add delay between tokens to prevent rate limits
         if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay per token
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay per token
         }
 
         try {
@@ -326,9 +326,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           let candlesByTimeframe: Record<string, any[]> = {};
 
           if (cached && now - cached.timestamp < CANDLE_CACHE_TTL) {
+            // Use cached data
             candlesByTimeframe = cached.candles;
           } else {
-            // Fetch candles for key timeframes only (reduce API calls)
+            // Fetch candles for key timeframes using batch method
             const timeframes: Array<'15m' | '30m' | '1h' | '4h' | '12h' | '1d'> = [
               '15m',
               '30m',
@@ -338,41 +339,39 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               '1d',
             ];
 
-            const endTime = Date.now();
-            
-            // Fetch timeframes sequentially with delays to prevent rate limits
-            for (let j = 0; j < timeframes.length; j++) {
-              const tf = timeframes[j];
-              
-              // Delay between timeframe requests
-              if (j > 0) {
-                await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
+            try {
+              // Use getMultiTimeframeCandles which handles batching and errors better
+              const candlesData = await hyperliquidService.getMultiTimeframeCandles(
+                symbol,
+                timeframes
+              );
+
+              // Ensure all timeframes are arrays
+              timeframes.forEach((tf) => {
+                candlesByTimeframe[tf] = Array.isArray(candlesData[tf])
+                  ? candlesData[tf]
+                  : [];
+              });
+
+              // Only cache if we got at least some data
+              const hasData = Object.values(candlesByTimeframe).some(
+                (candles) => candles.length > 0
+              );
+              if (hasData) {
+                candleCache.set(cacheKey, { candles: candlesByTimeframe, timestamp: now });
               }
-
-              try {
-                const startTime =
-                  endTime -
-                  (tf === '15m' || tf === '30m' || tf === '1h'
-                    ? 100 * (tf === '15m' ? 15 : tf === '30m' ? 30 : 60) * 60 * 1000
-                    : 200 * (tf === '4h' ? 4 : tf === '12h' ? 12 : 24) * 60 * 60 * 1000);
-
-                // Use HTTP API instead of WebSocket for candles (more reliable)
-                const candles = await hyperliquidService.getCandleSnapshot(
-                  symbol,
-                  tf,
-                  startTime,
-                  endTime
-                );
-
-                // Ensure candles is always an array
-                candlesByTimeframe[tf] = Array.isArray(candles) ? candles : [];
-              } catch (err) {
-                console.error(`Error fetching ${tf} candles for ${symbol}:`, err);
-                candlesByTimeframe[tf] = [];
+            } catch (err) {
+              console.error(`Error fetching candles for ${symbol}:`, err);
+              // Use cached data if available, even if expired
+              if (cached) {
+                candlesByTimeframe = cached.candles;
+              } else {
+                // Initialize empty arrays for all timeframes
+                timeframes.forEach((tf) => {
+                  candlesByTimeframe[tf] = [];
+                });
               }
             }
-
-            candleCache.set(cacheKey, { candles: candlesByTimeframe, timestamp: now });
           }
 
           // Calculate levels
@@ -440,9 +439,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       setLastUpdate(new Date());
     };
 
-    // Fetch levels initially and then every 60 seconds (cached, longer interval)
+    // Fetch levels initially and then every 2 minutes (candles don't change until candle closes)
+    // Use WebSocket for real-time price updates, HTTP only for historical candles
     fetchLevels();
-    const interval = setInterval(fetchLevels, 60_000); // 60 seconds
+    const interval = setInterval(fetchLevels, 120_000); // 2 minutes - candles are historical data
 
     return () => clearInterval(interval);
   }, [isLive, activeTab, tokens, updateTokenData]);

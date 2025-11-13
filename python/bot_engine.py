@@ -368,18 +368,29 @@ class BotInstance:
             
             # Get L2 order book (always fetch, even during cooldown, for exit checks)
             try:
+                logger.debug(f"📖 Fetching orderbook for {pair}...")
                 l2_data = info.l2_snapshot(pair)
                 
-                if isinstance(l2_data, int) or not l2_data or 'levels' not in l2_data:
-                    logger.debug(f"⚠️ {pair} Invalid L2 data: {l2_data}")
+                if isinstance(l2_data, int):
+                    logger.warning(f"⚠️ {pair} L2 API returned error code: {l2_data}")
+                    continue
+                
+                if not l2_data:
+                    logger.warning(f"⚠️ {pair} L2 API returned None/empty")
+                    continue
+                
+                if 'levels' not in l2_data:
+                    logger.warning(f"⚠️ {pair} L2 data missing 'levels' key. Data: {type(l2_data)}, Keys: {l2_data.keys() if hasattr(l2_data, 'keys') else 'N/A'}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]
                 asks = l2_data['levels'][1]
                 
                 if not bids or not asks:
-                    logger.debug(f"⚠️ {pair} Empty bids/asks")
+                    logger.warning(f"⚠️ {pair} Empty bids/asks - Bids: {len(bids) if bids else 0}, Asks: {len(asks) if asks else 0}")
                     continue
+                
+                logger.debug(f"✅ {pair} Orderbook fetched: {len(bids)} bids, {len(asks)} asks")
                 
                 # Calculate order book imbalance (percentage-based) - matches tkinter app exactly
                 bid_volume = sum(float(level[1]) for level in bids[:depth])
@@ -387,10 +398,12 @@ class BotInstance:
                 total_volume = bid_volume + ask_volume
                 
                 if total_volume == 0:
-                    logger.debug(f"⚠️ {pair} Zero total volume")
+                    logger.warning(f"⚠️ {pair} Zero total volume after summing {depth} levels")
                     continue
                 
                 imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (percentage) - matches tkinter app
+                
+                logger.debug(f"📊 {pair} Orderbook calc: Bid={bid_volume:.2f}, Ask={ask_volume:.2f}, Total={total_volume:.2f}, Imbalance={imbalance_ratio*100:.1f}%")
                 
                 # Log order book analysis (every 30 seconds)
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:

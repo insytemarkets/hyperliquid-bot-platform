@@ -13,6 +13,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeItem }) => {
     { name: 'Bot Builder', path: '/bot-builder', icon: '🔧' },
     { name: 'Analytics', path: '/analytics', icon: '📈' },
     { name: 'Market Analytics', path: '/market-analytics', icon: '🌍' },
+    { name: 'Scanner', path: '/scanner', icon: '🔍' },
     { name: 'Trading', path: '/trading', icon: '💹' },
     { name: 'Backtesting', path: '/backtesting', icon: '🔄' },
   ];

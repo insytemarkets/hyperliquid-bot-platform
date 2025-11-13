@@ -433,6 +433,148 @@ class HyperliquidService {
       transport: new hl.WebSocketTransport({ isTestnet: this.isTestnet }),
     });
   }
+
+  // Scanner-specific methods
+  async getRecentTrades(coin: string, limit: number = 100): Promise<Array<{
+    time: number;
+    coin: string;
+    side: 'A' | 'B'; // A = ask (sell), B = bid (buy)
+    px: string;
+    sz: string;
+    hash?: string;
+  }>> {
+    try {
+      const response = await this.infoClient.recentTrades({ coin });
+      if (response && Array.isArray(response)) {
+        return response.slice(0, limit).map((trade: any) => ({
+          time: trade.time || Date.now(),
+          coin: trade.coin || coin,
+          side: trade.side || 'B',
+          px: trade.px || '0',
+          sz: trade.sz || '0',
+          hash: trade.hash,
+        }));
+      }
+      return [];
+    } catch (error) {
+      console.error(`Error fetching recent trades for ${coin}:`, error);
+      return [];
+    }
+  }
+
+  async getTopTokensByVolume(minVolume: number, limit: number): Promise<Array<{
+    coin: string;
+    volume: number;
+    price: number;
+    change24h: number;
+    prevDayPx: number;
+    markPx: number;
+  }>> {
+    try {
+      const response = await this.infoClient.metaAndAssetCtxs();
+      if (!response || !response[1]) {
+        return [];
+      }
+
+      const tokens: Array<{
+        coin: string;
+        volume: number;
+        price: number;
+        change24h: number;
+        prevDayPx: number;
+        markPx: number;
+      }> = [];
+
+      response[1].forEach((assetCtx: any, index: number) => {
+        const coin = response[0].universe[index]?.name;
+        if (!coin) return;
+
+        const dayNtlVlm = parseFloat(assetCtx.dayNtlVlm || '0');
+        const prevDayPx = parseFloat(assetCtx.prevDayPx || '0');
+        const markPx = parseFloat(assetCtx.markPx || '0');
+
+        // Filter: volume >= minVolume AND has previous price (not delisted)
+        if (dayNtlVlm >= minVolume && prevDayPx > 0 && markPx > 0) {
+          const change24h = prevDayPx > 0 ? ((markPx - prevDayPx) / prevDayPx) * 100 : 0;
+
+          tokens.push({
+            coin,
+            volume: dayNtlVlm,
+            price: markPx,
+            change24h,
+            prevDayPx,
+            markPx,
+          });
+        }
+      });
+
+      // Sort by volume descending and return top limit
+      return tokens
+        .sort((a, b) => b.volume - a.volume)
+        .slice(0, limit);
+    } catch (error) {
+      console.error('Error fetching top tokens by volume:', error);
+      return [];
+    }
+  }
+
+  async getMultiTimeframeCandles(
+    coin: string,
+    timeframes: Array<'5m' | '15m' | '30m' | '1h' | '4h' | '12h' | '1d'>
+  ): Promise<Record<string, Array<{
+    time: number;
+    open: string;
+    high: string;
+    low: string;
+    close: string;
+    volume: string;
+  }>>> {
+    try {
+      const endTime = Date.now();
+      const results: Record<string, Array<any>> = {};
+
+      // Calculate start times and limits for each timeframe
+      const timeframeConfig: Record<string, { startTime: number; limit: number }> = {
+        '5m': { startTime: endTime - (100 * 5 * 60 * 1000), limit: 100 },
+        '15m': { startTime: endTime - (100 * 15 * 60 * 1000), limit: 100 },
+        '30m': { startTime: endTime - (100 * 30 * 60 * 1000), limit: 100 },
+        '1h': { startTime: endTime - (200 * 60 * 60 * 1000), limit: 200 },
+        '4h': { startTime: endTime - (200 * 4 * 60 * 60 * 1000), limit: 200 },
+        '12h': { startTime: endTime - (200 * 12 * 60 * 60 * 1000), limit: 200 },
+        '1d': { startTime: endTime - (200 * 24 * 60 * 60 * 1000), limit: 200 },
+      };
+
+      // Fetch candles for all timeframes in parallel
+      const promises = timeframes.map(async (tf) => {
+        const config = timeframeConfig[tf];
+        if (!config) return { tf, candles: [] };
+
+        try {
+          const candles = await this.getCandleSnapshot(
+            coin,
+            tf,
+            config.startTime,
+            endTime
+          );
+          return { tf, candles: candles || [] };
+        } catch (error) {
+          console.error(`Error fetching ${tf} candles for ${coin}:`, error);
+          return { tf, candles: [] };
+        }
+      });
+
+      const responses = await Promise.all(promises);
+
+      responses.forEach(({ tf, candles }) => {
+        results[tf] = candles;
+      });
+
+      return results;
+    } catch (error) {
+      console.error(`Error fetching multi-timeframe candles for ${coin}:`, error);
+      return {};
+    }
+  }
 }
 
 // Create singleton instance

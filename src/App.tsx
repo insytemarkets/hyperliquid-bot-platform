@@ -17,6 +17,7 @@ import Analytics from './pages/Analytics';
 import MarketAnalytics from './pages/MarketAnalytics';
 import Trading from './pages/Trading';
 import Backtesting from './pages/Backtesting';
+import Scanner from './pages/Scanner';
 import './App.css';
 import '@rainbow-me/rainbowkit/styles.css';
 
@@ -133,6 +134,7 @@ function App() {
                     <Route path="/market-analytics" element={<ProtectedRoute><MarketAnalytics /></ProtectedRoute>} />
                     <Route path="/trading" element={<ProtectedRoute><Trading /></ProtectedRoute>} />
                     <Route path="/backtesting" element={<ProtectedRoute><Backtesting /></ProtectedRoute>} />
+                    <Route path="/scanner" element={<ProtectedRoute><Scanner /></ProtectedRoute>} />
                   </Routes>
                 </div>
               </Router>

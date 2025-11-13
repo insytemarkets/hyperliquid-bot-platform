@@ -871,15 +871,16 @@ class BotInstance:
                     support_30m = None
                     avg_volume_30m = 0
                 
-                # Check downtrend filter (skip if bearish 1h candle)
+                # Check downtrend filter (skip if bearish 30m candle)
                 is_downtrend = False
                 try:
-                    if candles_1h and len(candles_1h) > 1:
-                        last_closed_1h_check = candles_1h[-2] if len(candles_1h) > 1 else candles_1h[-1]
-                        candle_close = float(last_closed_1h_check['c'])
-                        candle_open = float(last_closed_1h_check['o'])
+                    if candles_30m and len(candles_30m) > 1:
+                        last_closed_30m_check = candles_30m[-2] if len(candles_30m) > 1 else candles_30m[-1]
+                        candle_close = float(last_closed_30m_check['c'])
+                        candle_open = float(last_closed_30m_check['o'])
                         if candle_close < candle_open:
                             is_downtrend = True
+                            logger.debug(f"📉 {pair} Downtrend detected: Last 30m candle bearish (O: ${candle_open:.2f} C: ${candle_close:.2f})")
                 except Exception as e:
                     logger.debug(f"Failed to check downtrend for {pair}: {e}")
                 
@@ -944,7 +945,7 @@ class BotInstance:
                             # Check volume confirmation
                             volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
                             
-                            if volume_ratio >= 1.5:  # Volume spike confirmation
+                            if volume_ratio >= 1.2:  # Require at least 1.2x average volume (moderate spike)
                                 # TRADE SIGNAL: Open LONG position
                                 reason = f"Liquidity grab bounce at {support_tf} support ${support_level:.2f}"
                                 logger.info(f"✅ {pair} LIQUIDITY GRAB BOUNCE: {reason} | Volume: {volume_ratio:.2f}x")
@@ -961,7 +962,7 @@ class BotInstance:
                                     logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                     await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                             else:
-                                logger.debug(f"📊 {pair} Bounced above support but volume insufficient ({volume_ratio:.2f}x < 1.5x)")
+                                logger.debug(f"📊 {pair} Bounced above support but volume insufficient ({volume_ratio:.2f}x < 1.2x)")
                         else:
                             # Timeout exceeded - cleanup
                             logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 5min")

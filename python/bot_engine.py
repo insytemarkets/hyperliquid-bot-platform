@@ -287,8 +287,9 @@ class BotInstance:
             
             # Get L2 order book
             try:
-                logger.debug(f"Fetching L2 snapshot for {pair}...")
-                l2_data = info.l2_snapshot(pair)
+                logger.debug(f"Fetching L2 orderbook for {pair}...")
+                # Use l2_book method (matches TypeScript SDK) - pass coin as dict
+                l2_data = info.l2_book({'coin': pair})
                 logger.debug(f"L2 response type: {type(l2_data)}, value: {l2_data}")
                 
                 # Check if API returned error code instead of data
@@ -369,7 +370,8 @@ class BotInstance:
             # Get L2 order book (always fetch, even during cooldown, for exit checks)
             try:
                 logger.debug(f"📖 Fetching orderbook for {pair}...")
-                l2_data = info.l2_snapshot(pair)
+                # Use l2_book method (matches TypeScript SDK) - pass coin as dict
+                l2_data = info.l2_book({'coin': pair})
                 
                 if isinstance(l2_data, int):
                     logger.warning(f"⚠️ {pair} L2 API returned error code: {l2_data}")

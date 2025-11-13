@@ -33,8 +33,8 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
     },
     {
       value: 'orderbook_imbalance_v2',
-      label: 'Order Book Imbalance v2',
-      description: 'Improved order book imbalance strategy with better entry/exit logic. Enters when 70%+ bid volume, exits on reversal or time-based rules. High win rate and profit.'
+      label: 'Order Book Imbalance V2',
+      description: 'Percentage-based imbalance with hold time and cooldown. Enters LONG when bid volume exceeds threshold (default 70%).'
     },
     {
       value: 'cross_pair_lag',

@@ -52,6 +52,14 @@ export class StrategyFactory {
           depthLevels: 10,
         };
       
+      case 'orderbook_imbalance_v2':
+        return {
+          imbalance_threshold: 0.7, // 70% bid volume for long entry
+          depth: 10, // Number of order book levels to analyze
+          min_hold_time: 30, // Minimum hold time in seconds
+          cooldown_period: 60, // Cooldown between trades in seconds
+        };
+      
       case 'cross_pair_lag':
         return {
           leaderCoin: 'BTC',
@@ -80,15 +88,6 @@ export class StrategyFactory {
           supportTimeframes: ['1h', '30m'], // Support levels to monitor
         };
       
-      case 'orderbook_imbalance_v2':
-        return {
-          imbalance_threshold: 0.7, // 70% bid volume required to enter
-          depth: 10, // Top 10 order book levels
-          min_hold_time: 30, // Minimum 30 seconds hold
-          cooldown_period: 60, // 60 seconds cooldown between trades
-          exit_imbalance_threshold: 0.3, // Exit when <30% bids
-        };
-      
       default:
         return {};
     }
@@ -113,6 +112,16 @@ export class StrategyFactory {
           riskLevel: 'low',
           avgHoldTime: '1-5 seconds',
           winRate: '60-70%',
+          recommended: true,
+        };
+      
+      case 'orderbook_imbalance_v2':
+        return {
+          name: 'Order Book Imbalance V2',
+          description: 'Percentage-based order book imbalance strategy with hold time and cooldown. Enters when bid volume exceeds threshold (default 70%).',
+          riskLevel: 'low',
+          avgHoldTime: '30-60 seconds',
+          winRate: '65-75%',
           recommended: true,
         };
       
@@ -153,16 +162,6 @@ export class StrategyFactory {
           riskLevel: 'medium',
           avgHoldTime: '30-60 seconds',
           winRate: '75-85%',
-          recommended: true,
-        };
-      
-      case 'orderbook_imbalance_v2':
-        return {
-          name: 'Order Book Imbalance v2',
-          description: 'Improved order book imbalance strategy. Enters when buy orders heavily outweigh sell orders (70%+ bids), exits on reversal (<30% bids) or time-based rules. High win rate and profit.',
-          riskLevel: 'medium',
-          avgHoldTime: '30-60 seconds',
-          winRate: 'High',
           recommended: true,
         };
       

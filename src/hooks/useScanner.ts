@@ -3,6 +3,7 @@ import * as hl from '@nktkas/hyperliquid';
 import { ScannerToken, ScannerTab } from '../types/scanner';
 import { calculateLevels, findClosestLevel } from '../services/scanner/levelsCalculator';
 import { LiquidityData, LevelsData, Trade } from '../types/scanner';
+import { hyperliquidService } from '../services/hyperliquid';
 
 const MIN_VOLUME = 50_000_000; // $50M
 const MAX_DECLINE_THRESHOLD = -10; // -10%
@@ -300,20 +301,22 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     };
   }, [isLive, activeTab, fetchTokenList, analyzeLiquidityFromTrades, updateTokenData]);
 
-  // For levels tab: fetch candles periodically (with caching)
+  // For levels tab: fetch candles periodically (with caching) - Use HTTP API for reliability
   useEffect(() => {
-    if (!isLive || activeTab !== 'levels' || !infoClientRef.current) return;
+    if (!isLive || activeTab !== 'levels') return;
 
     const fetchLevels = async () => {
-      const infoClient = infoClientRef.current!;
       const symbols = tokenSymbolsRef.current;
+      if (symbols.length === 0) return;
 
       // Fetch candles for each token (with caching and rate limiting)
       for (let i = 0; i < symbols.length; i++) {
         const symbol = symbols[i];
         
         // Add delay between tokens to prevent rate limits
-        await new Promise((resolve) => setTimeout(resolve, i * 200)); // 200ms delay per token
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay per token
+        }
 
         try {
           const cacheKey = `${symbol}-levels`;
@@ -343,7 +346,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               
               // Delay between timeframe requests
               if (j > 0) {
-                await new Promise((resolve) => setTimeout(resolve, 300)); // 300ms delay
+                await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
               }
 
               try {
@@ -353,14 +356,16 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
                     ? 100 * (tf === '15m' ? 15 : tf === '30m' ? 30 : 60) * 60 * 1000
                     : 200 * (tf === '4h' ? 4 : tf === '12h' ? 12 : 24) * 60 * 60 * 1000);
 
-                const candles = await infoClient.candleSnapshot({
-                  coin: symbol,
-                  interval: tf,
+                // Use HTTP API instead of WebSocket for candles (more reliable)
+                const candles = await hyperliquidService.getCandleSnapshot(
+                  symbol,
+                  tf,
                   startTime,
-                  endTime,
-                });
+                  endTime
+                );
 
-                candlesByTimeframe[tf] = candles || [];
+                // Ensure candles is always an array
+                candlesByTimeframe[tf] = Array.isArray(candles) ? candles : [];
               } catch (err) {
                 console.error(`Error fetching ${tf} candles for ${symbol}:`, err);
                 candlesByTimeframe[tf] = [];
@@ -375,13 +380,19 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           if (!token) continue;
 
           const allLevelsByTimeframe: Record<string, { support: any; resistance: any }> = {};
+          
+          // Ensure we only process arrays
           Object.entries(candlesByTimeframe).forEach(([tf, candles]) => {
-            if (candles && candles.length > 0) {
-              const levels = calculateLevels(candles, tf, token.price);
-              allLevelsByTimeframe[tf] = {
-                support: levels.support,
-                resistance: levels.resistance,
-              };
+            if (Array.isArray(candles) && candles.length > 0) {
+              try {
+                const levels = calculateLevels(candles, tf, token.price);
+                allLevelsByTimeframe[tf] = {
+                  support: levels.support,
+                  resistance: levels.resistance,
+                };
+              } catch (err) {
+                console.error(`Error calculating levels for ${symbol} ${tf}:`, err);
+              }
             }
           });
 
@@ -393,11 +404,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           let maxResistanceWeight = 0;
 
           Object.values(allLevelsByTimeframe).forEach((levels) => {
-            if (levels.support && levels.support.weight > maxSupportWeight) {
+            if (levels && levels.support && levels.support.weight > maxSupportWeight) {
               strongestSupport = levels.support;
               maxSupportWeight = levels.support.weight;
             }
-            if (levels.resistance && levels.resistance.weight > maxResistanceWeight) {
+            if (levels && levels.resistance && levels.resistance.weight > maxResistanceWeight) {
               strongestResistance = levels.resistance;
               maxResistanceWeight = levels.resistance.weight;
             }
@@ -422,15 +433,16 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           updateTokenData(symbol, { levels: levelsData });
         } catch (err) {
           console.error(`Error fetching levels for ${symbol}:`, err);
+          // Don't crash - continue with other tokens
         }
       }
 
       setLastUpdate(new Date());
     };
 
-    // Fetch levels initially and then every 30 seconds (cached)
+    // Fetch levels initially and then every 60 seconds (cached, longer interval)
     fetchLevels();
-    const interval = setInterval(fetchLevels, 30_000);
+    const interval = setInterval(fetchLevels, 60_000); // 60 seconds
 
     return () => clearInterval(interval);
   }, [isLive, activeTab, tokens, updateTokenData]);

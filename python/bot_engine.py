@@ -349,111 +349,92 @@ class BotInstance:
     
     async def run_orderbook_imbalance_v2_strategy(self):
         """Order Book Imbalance V2 Strategy - Percentage-based with hold time and cooldown"""
-        if len(self.positions) >= self.strategy['max_positions']:
-            return
+        # Get strategy parameters with defaults (check both direct and parameters dict)
+        params = self.strategy.get('parameters', {})
+        imbalance_threshold = params.get('imbalance_threshold', self.strategy.get('imbalance_threshold', 0.7))  # Default 70% bid volume
+        depth = params.get('depth', self.strategy.get('depth', 10))  # Default 10 levels
+        min_hold_time = params.get('min_hold_time', self.strategy.get('min_hold_time', 30))  # Default 30 seconds
+        cooldown_period = params.get('cooldown_period', self.strategy.get('cooldown_period', 60))  # Default 60 seconds
         
-        # Get strategy parameters with defaults
-        imbalance_threshold = self.strategy.get('imbalance_threshold', 0.7)  # Default 70% bid volume
-        depth = self.strategy.get('depth', 10)  # Default 10 levels
-        min_hold_time = self.strategy.get('min_hold_time', 30)  # Default 30 seconds
-        cooldown_period = self.strategy.get('cooldown_period', 60)  # Default 60 seconds
+        logger.debug(f"📊 OrderBook V2 Parameters: threshold={imbalance_threshold}, depth={depth}, min_hold={min_hold_time}s, cooldown={cooldown_period}s")
         
         current_time = datetime.now().timestamp()
         
         logger.info(f"🔍 Orderbook Imbalance V2 | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
         
         for pair in self.strategy['pairs']:
-            # Skip if already have position
+            # Skip if already have position (exit logic is handled in check_positions)
             has_open_position = any(p['symbol'] == pair for p in self.positions)
             
-            # Check cooldown period
-            last_trade_time = self.orderbook_v2_last_trade_time.get(pair, 0)
-            if current_time - last_trade_time < cooldown_period:
-                continue
-            
-            # Get L2 order book
+            # Get L2 order book (always fetch, even during cooldown, for exit checks)
             try:
                 l2_data = info.l2_snapshot(pair)
                 
                 if isinstance(l2_data, int) or not l2_data or 'levels' not in l2_data:
+                    logger.debug(f"⚠️ {pair} Invalid L2 data: {l2_data}")
                     continue
                 
                 bids = l2_data['levels'][0]  # [[price, size], ...]
                 asks = l2_data['levels'][1]
                 
                 if not bids or not asks:
+                    logger.debug(f"⚠️ {pair} Empty bids/asks")
                     continue
                 
-                # Calculate order book imbalance (percentage-based)
+                # Calculate order book imbalance (percentage-based) - matches tkinter app exactly
                 bid_volume = sum(float(level[1]) for level in bids[:depth])
                 ask_volume = sum(float(level[1]) for level in asks[:depth])
                 total_volume = bid_volume + ask_volume
                 
                 if total_volume == 0:
+                    logger.debug(f"⚠️ {pair} Zero total volume")
                     continue
                 
-                imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (percentage)
+                imbalance_ratio = bid_volume / total_volume  # 0.0 to 1.0 (percentage) - matches tkinter app
                 
                 # Log order book analysis (every 30 seconds)
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                    cooldown_remaining = max(0, cooldown_period - (current_time - self.orderbook_v2_last_trade_time.get(pair, 0)))
                     await self.log(
                         'market_data',
-                        f"📊 {pair} Order Book V2 | Bid: {bid_volume:.2f} ({imbalance_ratio*100:.1f}%) | Ask: {ask_volume:.2f} ({(1-imbalance_ratio)*100:.1f}%) | Threshold: {imbalance_threshold*100:.0f}%",
+                        f"📊 {pair} Order Book V2 | Bid: {bid_volume:.2f} ({imbalance_ratio*100:.1f}%) | Ask: {ask_volume:.2f} ({(1-imbalance_ratio)*100:.1f}%) | Threshold: {imbalance_threshold*100:.0f}% | Cooldown: {int(cooldown_remaining)}s",
                         {
                             'pair': pair,
                             'bid_volume': bid_volume,
                             'ask_volume': ask_volume,
                             'imbalance_ratio': imbalance_ratio,
                             'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0])
+                            'best_ask': float(asks[0][0]),
+                            'cooldown_remaining': cooldown_remaining
                         }
                     )
                     self.last_analysis_log_time = current_time
                 
-                # Entry signals - Long when bid volume > threshold
-                if not has_open_position and imbalance_ratio > imbalance_threshold:
-                    current_price = self.last_prices.get(pair)
-                    if not current_price:
-                        continue
-                    
-                    success = await self.open_position(pair, 'long', current_price)
-                    if success:
-                        self.orderbook_v2_last_trade_time[pair] = current_time
-                        self.orderbook_v2_position_open_time[pair] = current_time
-                        await self.log('signal', f"🟢 LONG V2: {pair} - Strong bid pressure ({imbalance_ratio*100:.1f}% > {imbalance_threshold*100:.0f}%)", {})
-                
-                # Exit logic for open positions
+                # Exit logic for open positions (check FIRST, even during cooldown)
                 if has_open_position:
                     position = next((p for p in self.positions if p['symbol'] == pair), None)
                     if position:
                         position_open_time = self.orderbook_v2_position_open_time.get(pair, current_time)
                         time_in_position = current_time - position_open_time
                         
-                        # Exit if imbalance reverses (opposite side becomes dominant)
+                        # Exit logic - matches tkinter app exactly:
+                        # Don't exit if time < min_hold_time (return False in tkinter)
+                        # If time >= min_hold_time: Exit if imbalance < (1-threshold) OR time > 2x min_hold_time
                         should_exit = False
                         exit_reason = ""
                         
-                        if position['side'] == 'long':
-                            # Exit long if bid volume drops below threshold (imbalance reversed)
-                            if imbalance_ratio < (1 - imbalance_threshold):
-                                should_exit = True
-                                exit_reason = f"Imbalance reversed ({imbalance_ratio*100:.1f}% < {(1-imbalance_threshold)*100:.0f}%)"
-                        
-                        # Exit if minimum hold time exceeded and we've been in profit
-                        if not should_exit and time_in_position >= min_hold_time:
-                            # Check if position is profitable
-                            entry_price = position['entry_price']
-                            current_price = self.last_prices.get(pair, entry_price)
-                            pnl_pct = ((current_price - entry_price) / entry_price) * 100 if position['side'] == 'long' else ((entry_price - current_price) / entry_price) * 100
+                        # Only check exit conditions if min_hold_time has passed (matches tkinter app)
+                        if time_in_position >= min_hold_time:
+                            if position['side'] == 'long':
+                                # Exit long if bid volume drops below (1 - threshold) = 0.3 (30%) - matches tkinter app
+                                if imbalance_ratio < (1 - imbalance_threshold):
+                                    should_exit = True
+                                    exit_reason = f"Imbalance reversed ({imbalance_ratio*100:.1f}% < {(1-imbalance_threshold)*100:.0f}%)"
                             
-                            if pnl_pct > 0:  # In profit, can exit after min hold time
+                            # Exit if hold time exceeds 2x min_hold_time (force exit) - matches tkinter app
+                            if not should_exit and time_in_position >= min_hold_time * 2:
                                 should_exit = True
-                                exit_reason = f"Min hold time reached ({int(time_in_position)}s) with profit"
-                        
-                        # Exit if hold time exceeds 2x min_hold_time (force exit)
-                        if not should_exit and time_in_position >= min_hold_time * 2:
-                            should_exit = True
-                            exit_reason = f"Max hold time reached ({int(time_in_position)}s)"
+                                exit_reason = f"Max hold time reached ({int(time_in_position)}s)"
                         
                         if should_exit:
                             current_price = self.last_prices.get(pair, position['entry_price'])
@@ -461,9 +442,41 @@ class BotInstance:
                             self.orderbook_v2_last_trade_time[pair] = current_time
                             if pair in self.orderbook_v2_position_open_time:
                                 del self.orderbook_v2_position_open_time[pair]
+                            continue  # Skip entry logic after exit
+                
+                # Entry signals - Long when bid volume > threshold (only if not in cooldown and not max positions)
+                if len(self.positions) >= self.strategy['max_positions']:
+                    continue
+                
+                # Check cooldown period (only for entries, not exits)
+                last_trade_time = self.orderbook_v2_last_trade_time.get(pair, 0)
+                cooldown_remaining = cooldown_period - (current_time - last_trade_time)
+                
+                if cooldown_remaining > 0:
+                    logger.debug(f"⏸️ {pair} In cooldown: {int(cooldown_remaining)}s remaining | Imbalance: {imbalance_ratio*100:.1f}%")
+                    continue
+                
+                # Entry signal - Long when bid volume > threshold (matches tkinter app exactly)
+                if imbalance_ratio > imbalance_threshold:
+                    current_price = self.last_prices.get(pair)
+                    if not current_price:
+                        logger.debug(f"⚠️ {pair} No price data available")
+                        continue
+                    
+                    logger.info(f"✅ {pair} ENTRY SIGNAL: Imbalance {imbalance_ratio*100:.1f}% > {imbalance_threshold*100:.0f}% threshold")
+                    success = await self.open_position(pair, 'long', current_price)
+                    if success:
+                        self.orderbook_v2_last_trade_time[pair] = current_time
+                        self.orderbook_v2_position_open_time[pair] = current_time
+                        await self.log('signal', f"🟢 LONG V2: {pair} - Strong bid pressure ({imbalance_ratio*100:.1f}% > {imbalance_threshold*100:.0f}%)", {})
+                    else:
+                        logger.warning(f"⚠️ {pair} Entry signal triggered but position open failed")
+                else:
+                    logger.debug(f"📊 {pair} Imbalance {imbalance_ratio*100:.1f}% below threshold {imbalance_threshold*100:.0f}%")
                     
             except Exception as e:
                 logger.error(f"Error in orderbook imbalance v2 for {pair}: {e}", exc_info=True)
+                await self.log('error', f"❌ Error in orderbook v2 for {pair}: {str(e)}", {'error': str(e)})
     
     async def run_multi_timeframe_breakout_strategy(self):
         """Multi-Timeframe Breakout Strategy - Advanced breakout detection"""

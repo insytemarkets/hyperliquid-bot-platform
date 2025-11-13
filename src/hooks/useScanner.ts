@@ -236,9 +236,9 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
           tokenSymbolsRef.current.forEach((coin, index) => {
             // Stagger subscriptions to avoid rate limits
-            setTimeout(() => {
+            setTimeout(async () => {
               try {
-                const unsub = subsClient.trades({ coin }, (data: any) => {
+                const subscription = await subsClient.trades({ coin }, (data: any) => {
                   // Handle both array and object formats
                   let trades: any[] = [];
                   if (Array.isArray(data)) {
@@ -271,7 +271,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
                   }
                 });
 
-                subscriptionsRef.current.set(`trades-${coin}`, unsub);
+                // Store unsubscribe function
+                if (subscription && typeof subscription.unsubscribe === 'function') {
+                  subscriptionsRef.current.set(`trades-${coin}`, () => subscription.unsubscribe());
+                }
               } catch (err) {
                 console.error(`Error subscribing to trades for ${coin}:`, err);
               }

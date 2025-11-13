@@ -215,8 +215,15 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           if (data && typeof data === 'object') {
             Object.entries(data).forEach(([coin, price]) => {
               if (tokenSymbolsRef.current.includes(coin)) {
-                const priceNum = typeof price === 'string' ? parseFloat(price) : price;
-                updateTokenData(coin, { price: priceNum });
+                const priceNum =
+                  typeof price === 'string'
+                    ? parseFloat(price)
+                    : typeof price === 'number'
+                    ? price
+                    : 0;
+                if (priceNum > 0) {
+                  updateTokenData(coin, { price: priceNum });
+                }
               }
             });
             setLastUpdate(new Date());

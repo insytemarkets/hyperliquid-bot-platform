@@ -219,7 +219,7 @@ const LevelsTab: React.FC<LevelsTabProps> = ({ tokens, loading }) => {
                   : null;
 
                 return (
-                  <tr key={token.symbol} className="hover:bg-gray-50">
+                  <tr key={`levels-${token.symbol}`} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <span className="text-sm font-medium text-gray-900">{token.symbol}</span>

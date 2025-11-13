@@ -1,59 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import Header from '../components/Header';
 import Sidebar from '../components/Sidebar';
 import LiquidityTab from '../components/scanner/LiquidityTab';
 import LevelsTab from '../components/scanner/LevelsTab';
-import { ScannerToken, ScannerTab } from '../types/scanner';
-import {
-  getLiquidityScannerData,
-  getLevelsScannerData,
-} from '../services/scanner/scannerService';
+import { ScannerTab } from '../types/scanner';
+import { useScanner } from '../hooks/useScanner';
 
 const Scanner: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ScannerTab>('liquidity');
-  const [tokens, setTokens] = useState<ScannerToken[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-
-  const fetchData = useCallback(async () => {
-    try {
-      setError(null);
-      setLoading(true);
-
-      let data: ScannerToken[];
-      if (activeTab === 'liquidity') {
-        data = await getLiquidityScannerData();
-      } else {
-        data = await getLevelsScannerData();
-      }
-
-      setTokens(data);
-      setLastUpdate(new Date());
-    } catch (err) {
-      console.error('Error fetching scanner data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch scanner data');
-    } finally {
-      setLoading(false);
-    }
-  }, [activeTab]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Auto-refresh every 2 seconds when live mode is enabled
-  useEffect(() => {
-    if (!isLive) return;
-
-    const interval = setInterval(() => {
-      fetchData();
-    }, 2000); // 2 seconds
-
-    return () => clearInterval(interval);
-  }, [isLive, fetchData]);
+  
+  const { tokens, loading, error, lastUpdate } = useScanner(activeTab, isLive);
 
   const formatLastUpdate = (date: Date) => {
     return date.toLocaleTimeString('en-US', {

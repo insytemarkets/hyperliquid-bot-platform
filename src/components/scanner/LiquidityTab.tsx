@@ -211,7 +211,7 @@ const LiquidityTab: React.FC<LiquidityTabProps> = ({ tokens, loading }) => {
                 const flowRatioPercent = liquidity.flowRatio * 100;
 
                 return (
-                  <tr key={token.symbol} className="hover:bg-gray-50">
+                  <tr key={`liquidity-${token.symbol}`} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <span className="text-sm font-medium text-gray-900">{token.symbol}</span>

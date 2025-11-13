@@ -161,7 +161,7 @@ class BotInstance:
         # }
         self.liquidity_grab_events: Dict[str, dict] = {}  # Track wick events per pair for liquidity grab strategy
         # Structure: {'pair': {'wick_time': float, 'support_level': float, 'support_tf': str, 'wick_price': float}}
-        self.liquidity_grab_timeout = 300  # 5 minutes (300 seconds) timeout for bounce
+        self.liquidity_grab_timeout = 600  # 10 minutes (600 seconds) timeout for bounce - extended for more opportunities
         self.last_liquidity_grab_check: float = 0  # Track last liquidity grab check time
         self.liquidity_grab_check_interval = 5  # Check every 5 seconds (don't need to check every second)
         self.orderbook_v2_last_trade_time: Dict[str, float] = {}  # Track last trade time per pair for v2 strategy
@@ -1007,7 +1007,14 @@ class BotInstance:
                     logger.debug(f"Failed to check downtrend for {pair}: {e}")
                 
                 if is_downtrend:
-                    logger.debug(f"⏸️ {pair} Skipping liquidity grab - Market in downtrend")
+                    # Log this occasionally so we know why trades aren't happening
+                    if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                        await self.log(
+                            'market_data',
+                            f"⏸️ {pair} Skipping liquidity grab - Market in downtrend (30m candle bearish)",
+                            {'pair': pair, 'support_1h': support_1h, 'support_30m': support_30m, 'current_price': current_price}
+                        )
+                        self.last_analysis_log_time = current_time
                     continue
                 
                 # Get current volume (from 15m candles)
@@ -1025,12 +1032,39 @@ class BotInstance:
                 # Use average volume from 30m or 1h as baseline
                 avg_volume = avg_volume_30m if avg_volume_30m > 0 else avg_volume_1h
                 
-                # Detect Wick Below Support
+                # Detect Wick Below Support (with wiggle room - within 0.1% counts as a wick)
                 wick_event = self.liquidity_grab_events.get(pair)
+                wick_threshold = 0.001  # 0.1% wiggle room for wick detection
+                
+                # Log market metrics when not in downtrend (every 30 seconds)
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                    support_info = []
+                    if support_1h:
+                        dist_1h = ((current_price - support_1h) / support_1h) * 100
+                        support_info.append(f"1h: ${support_1h:.2f} ({dist_1h:+.2f}%)")
+                    if support_30m:
+                        dist_30m = ((current_price - support_30m) / support_30m) * 100
+                        support_info.append(f"30m: ${support_30m:.2f} ({dist_30m:+.2f}%)")
+                    
+                    wick_status = "Monitoring wick" if wick_event else "No wick detected"
+                    support_str = " | ".join(support_info) if support_info else "No support levels"
+                    
+                    await self.log(
+                        'market_data',
+                        f"📊 {pair} @ ${current_price:.2f} | {support_str} | {wick_status}",
+                        {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'support_1h': support_1h,
+                            'support_30m': support_30m,
+                            'has_wick_event': bool(wick_event)
+                        }
+                    )
+                    self.last_analysis_log_time = current_time
                 
                 # Check 1h support first (priority)
-                if support_1h and current_price < support_1h:
-                    # Price wicked below 1h support
+                if support_1h and current_price <= support_1h * (1 + wick_threshold):
+                    # Price wicked below or near 1h support (within 0.1%)
                     if not wick_event or wick_event.get('support_level') != support_1h:
                         # New wick event or support level changed
                         self.liquidity_grab_events[pair] = {
@@ -1039,10 +1073,10 @@ class BotInstance:
                             'support_tf': '1h',
                             'wick_price': current_price
                         }
-                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below 1h support ${support_1h:.2f} @ ${current_price:.2f}")
+                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below/near 1h support ${support_1h:.2f} @ ${current_price:.2f} (within 0.1%)")
                 # Check 30m support if no 1h wick
-                elif support_30m and current_price < support_30m:
-                    # Price wicked below 30m support
+                elif support_30m and current_price <= support_30m * (1 + wick_threshold):
+                    # Price wicked below or near 30m support (within 0.1%)
                     if not wick_event or wick_event.get('support_level') != support_30m:
                         # New wick event or support level changed
                         self.liquidity_grab_events[pair] = {
@@ -1051,26 +1085,39 @@ class BotInstance:
                             'support_tf': '30m',
                             'wick_price': current_price
                         }
-                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below 30m support ${support_30m:.2f} @ ${current_price:.2f}")
+                        logger.info(f"🔻 {pair} Liquidity grab detected: Price wicked below/near 30m support ${support_30m:.2f} @ ${current_price:.2f} (within 0.1%)")
                 
                 # Detect Bounce Back
                 if wick_event:
                     support_level = wick_event['support_level']
                     support_tf = wick_event['support_tf']
                     wick_time = wick_event['wick_time']
+                    wick_price = wick_event.get('wick_price', current_price)
                     time_since_wick = current_time - wick_time
                     
-                    # Check if price bounced back above support
-                    if current_price > support_level:
+                    # Calculate price recovery from wick low
+                    price_recovery = ((current_price - wick_price) / wick_price) * 100 if wick_price > 0 else 0
+                    
+                    # Relaxed bounce condition: Price recovered to within 0.2% of support (or above)
+                    bounce_threshold = 0.002  # 0.2% threshold
+                    price_near_support = current_price >= support_level * (1 - bounce_threshold)
+                    
+                    # Log wick event status for debugging
+                    if time_since_wick <= 30:  # Log every 30 seconds when monitoring a wick event
+                        logger.debug(f"🔍 {pair} Monitoring wick: Support ${support_level:.2f} ({support_tf}) | Current ${current_price:.2f} | Recovery: {price_recovery:+.2f}% | Time: {int(time_since_wick)}s")
+                    
+                    # Check if price recovered to near/above support
+                    if price_near_support:
                         # Check if bounce happened within timeout window
                         if time_since_wick <= self.liquidity_grab_timeout:
-                            # Check volume confirmation
+                            # Check volume confirmation (lowered to 1.0x - just average volume)
                             volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
                             
-                            if volume_ratio >= 1.2:  # Require at least 1.2x average volume (moderate spike)
+                            # More lenient: require at least 0.8x volume (below average is OK if price recovered well)
+                            if volume_ratio >= 0.8 or price_recovery >= 0.1:  # Either decent volume OR price recovered 0.1%+
                                 # TRADE SIGNAL: Open LONG position
-                                reason = f"Liquidity grab bounce at {support_tf} support ${support_level:.2f}"
-                                logger.info(f"✅ {pair} LIQUIDITY GRAB BOUNCE: {reason} | Volume: {volume_ratio:.2f}x")
+                                reason = f"Liquidity grab bounce at {support_tf} support ${support_level:.2f} (recovery: {price_recovery:+.2f}%)"
+                                logger.info(f"✅ {pair} LIQUIDITY GRAB BOUNCE: {reason} | Volume: {volume_ratio:.2f}x | Recovery: {price_recovery:+.2f}%")
                                 
                                 try:
                                     success = await self.open_position(pair, 'long', current_price)
@@ -1084,15 +1131,15 @@ class BotInstance:
                                     logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                     await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                             else:
-                                logger.debug(f"📊 {pair} Bounced above support but volume insufficient ({volume_ratio:.2f}x < 1.2x)")
+                                logger.debug(f"📊 {pair} Recovered to support but volume low ({volume_ratio:.2f}x) and recovery weak ({price_recovery:+.2f}%)")
                         else:
                             # Timeout exceeded - cleanup
-                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 5min")
+                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 10min")
                             del self.liquidity_grab_events[pair]
                     else:
                         # Still below support, check if timeout exceeded
                         if time_since_wick > self.liquidity_grab_timeout:
-                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 5min")
+                            logger.debug(f"⏱️ {pair} Liquidity grab expired - no bounce within 10min")
                             del self.liquidity_grab_events[pair]
                 
             except Exception as e:

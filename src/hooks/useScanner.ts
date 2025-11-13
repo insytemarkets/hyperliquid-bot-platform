@@ -13,9 +13,13 @@ const TOP_TOKENS_COUNT = 15;
 let tokenListCache: { tokens: any[]; timestamp: number } | null = null;
 const TOKEN_LIST_CACHE_TTL = 30_000; // 30 seconds
 
-// Cache for candles (refresh every 60 seconds)
+// Cache for candles (refresh every 5 minutes - candles only update when they close)
 const candleCache: Map<string, { candles: any; timestamp: number }> = new Map();
-const CANDLE_CACHE_TTL = 60_000; // 60 seconds
+const CANDLE_CACHE_TTL = 300_000; // 5 minutes - candles are historical data
+
+// Track failed fetches to prevent spam
+const failedFetches: Map<string, number> = new Map();
+const FAILED_FETCH_COOLDOWN = 60_000; // Don't retry failed fetches for 1 minute
 
 export function useScanner(activeTab: ScannerTab, isLive: boolean) {
   const [tokens, setTokens] = useState<ScannerToken[]>([]);
@@ -325,18 +329,30 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
           let candlesByTimeframe: Record<string, any[]> = {};
 
+          // Check if we should skip fetching (recent failure)
+          const lastFailure = failedFetches.get(symbol);
+          const shouldSkip = lastFailure && now - lastFailure < FAILED_FETCH_COOLDOWN;
+
           if (cached && now - cached.timestamp < CANDLE_CACHE_TTL) {
             // Use cached data
             candlesByTimeframe = cached.candles;
+          } else if (shouldSkip) {
+            // Skip fetching if we recently failed
+            if (cached) {
+              candlesByTimeframe = cached.candles; // Use stale cache
+            } else {
+              // Initialize empty arrays
+              ['15m', '30m', '1h', '4h'].forEach((tf) => {
+                candlesByTimeframe[tf] = [];
+              });
+            }
           } else {
-            // Fetch candles for key timeframes using batch method
-            const timeframes: Array<'15m' | '30m' | '1h' | '4h' | '12h' | '1d'> = [
+            // Fetch candles for key timeframes only (reduced from 6 to 4)
+            const timeframes: Array<'15m' | '30m' | '1h' | '4h'> = [
               '15m',
               '30m',
               '1h',
               '4h',
-              '12h',
-              '1d',
             ];
 
             try {
@@ -359,9 +375,18 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               );
               if (hasData) {
                 candleCache.set(cacheKey, { candles: candlesByTimeframe, timestamp: now });
+                failedFetches.delete(symbol); // Clear failure flag on success
+              } else {
+                // No data received, mark as failed
+                failedFetches.set(symbol, now);
               }
             } catch (err) {
-              console.error(`Error fetching candles for ${symbol}:`, err);
+              // Only log error once per symbol per cooldown period
+              if (!lastFailure || now - lastFailure >= FAILED_FETCH_COOLDOWN) {
+                console.error(`Error fetching candles for ${symbol}:`, err);
+              }
+              failedFetches.set(symbol, now);
+              
               // Use cached data if available, even if expired
               if (cached) {
                 candlesByTimeframe = cached.candles;
@@ -439,10 +464,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       setLastUpdate(new Date());
     };
 
-    // Fetch levels initially and then every 2 minutes (candles don't change until candle closes)
+    // Fetch levels initially and then every 5 minutes (candles don't change until candle closes)
     // Use WebSocket for real-time price updates, HTTP only for historical candles
     fetchLevels();
-    const interval = setInterval(fetchLevels, 120_000); // 2 minutes - candles are historical data
+    const interval = setInterval(fetchLevels, 300_000); // 5 minutes - candles are historical data
 
     return () => clearInterval(interval);
   }, [isLive, activeTab, tokens, updateTokenData]);

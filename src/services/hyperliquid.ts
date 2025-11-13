@@ -206,8 +206,11 @@ class HyperliquidService {
         endTime,
       });
       return response;
-    } catch (error) {
-      console.error(`Error fetching candle snapshot for ${coin}:`, error);
+    } catch (error: any) {
+      // Suppress error logging for rate limits (429) - they're expected
+      if (error?.status !== 429 && error?.code !== 429) {
+        console.error(`Error fetching candle snapshot for ${coin}:`, error);
+      }
       throw error;
     }
   }
@@ -570,8 +573,11 @@ class HyperliquidService {
             endTime
           );
           responses.push({ tf, candles: Array.isArray(candles) ? candles : [] });
-        } catch (error) {
-          console.error(`Error fetching ${tf} candles for ${coin}:`, error);
+        } catch (error: any) {
+          // Suppress error logging for rate limits (429) - they're expected with many requests
+          if (error?.status !== 429 && error?.code !== 429) {
+            console.error(`Error fetching ${tf} candles for ${coin}:`, error);
+          }
           responses.push({ tf, candles: [] });
         }
       }

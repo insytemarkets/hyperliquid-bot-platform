@@ -269,19 +269,51 @@ def get_top_tokens_by_volume() -> List[dict]:
     try:
         logger.debug("📡 Fetching token list from Hyperliquid...")
         response = info.meta_and_asset_ctxs()
-        if not response or not response[1]:
-            logger.warning("⚠️ Empty response from Hyperliquid API")
+        if not response or len(response) < 2:
+            logger.warning("⚠️ Empty or invalid response from Hyperliquid API")
             return []
         
+        # response[0] is meta dict, response[1] is asset_ctxs list
+        meta = response[0]
+        asset_ctxs = response[1]
+        
+        # Check if meta is dict and has 'universe' key
+        if isinstance(meta, dict):
+            universe = meta.get('universe', [])
+        else:
+            # If it's an object, try to access .universe attribute
+            universe = getattr(meta, 'universe', [])
+        
+        if not universe or not asset_ctxs:
+            logger.warning("⚠️ Empty universe or asset_ctxs")
+            return []
+        
+        logger.debug(f"📊 Found {len(universe)} tokens in universe, {len(asset_ctxs)} asset contexts")
+        
         token_list = []
-        for asset_ctx, meta_item in zip(response[1], response[0].universe):
-            coin = meta_item.get('name')
+        for i, asset_ctx in enumerate(asset_ctxs):
+            if i >= len(universe):
+                break
+            
+            # Get coin name from universe
+            meta_item = universe[i]
+            if isinstance(meta_item, dict):
+                coin = meta_item.get('name')
+            else:
+                coin = getattr(meta_item, 'name', None)
+            
             if not coin:
                 continue
             
-            day_ntl_vlm = float(asset_ctx.get('dayNtlVlm', 0))
-            prev_day_px = float(asset_ctx.get('prevDayPx', 0))
-            mark_px = float(asset_ctx.get('markPx', 0))
+            # Get asset context data
+            if isinstance(asset_ctx, dict):
+                day_ntl_vlm = float(asset_ctx.get('dayNtlVlm', 0))
+                prev_day_px = float(asset_ctx.get('prevDayPx', 0))
+                mark_px = float(asset_ctx.get('markPx', 0))
+            else:
+                day_ntl_vlm = float(getattr(asset_ctx, 'dayNtlVlm', 0))
+                prev_day_px = float(getattr(asset_ctx, 'prevDayPx', 0))
+                mark_px = float(getattr(asset_ctx, 'markPx', 0))
             
             if day_ntl_vlm >= MIN_VOLUME and prev_day_px > 0 and mark_px > 0:
                 change24h = ((mark_px - prev_day_px) / prev_day_px) * 100 if prev_day_px > 0 else 0

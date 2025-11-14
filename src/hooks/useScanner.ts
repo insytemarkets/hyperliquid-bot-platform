@@ -390,9 +390,9 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               timeframes.forEach((tf) => {
                 const candles = candlesData[tf];
                 if (Array.isArray(candles) && candles.length > 0) {
-                  // Check if candles have the expected format
-                  const sample = candles[0];
-                  if (sample && (sample.time || sample.t || sample.startTime)) {
+                  // Check if candles have the expected format (check for time property or any property)
+                  const sample = candles[0] as any;
+                  if (sample && (sample.time !== undefined || sample.t !== undefined || sample.startTime !== undefined || sample.open !== undefined)) {
                     candlesByTimeframe[tf] = candles;
                     console.log(`✅ ${symbol} ${tf}: ${candles.length} candles, sample:`, sample);
                   } else {

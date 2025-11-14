@@ -319,8 +319,6 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
   // For levels tab: fetch levels from Supabase (written by Python worker)
   useEffect(() => {
     if (!isLive || activeTab !== 'levels') return;
-    
-    console.log('🔍 Starting levels fetch from Supabase');
 
     const fetchLevels = async () => {
       const symbols = tokenSymbolsRef.current;
@@ -342,7 +340,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
         }
 
         if (!levelsData || levelsData.length === 0) {
-          console.warn('⚠️ No levels data in Supabase yet (worker may still be initializing)');
+          // Only log warning once, not every fetch
           return;
         }
 
@@ -383,7 +381,6 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
         }
 
         setLastUpdate(new Date());
-        console.log(`✅ Loaded levels for ${levelsData.length} tokens from Supabase`);
       } catch (err) {
         console.error('❌ Error fetching levels from Supabase:', err);
       }
@@ -438,15 +435,12 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
           updateTokenData(symbol, { levels: levelsDataFormatted });
           setLastUpdate(new Date());
-          console.log(`🔄 Real-time update: ${symbol} levels refreshed`);
+          // Removed console.log for real-time updates - too spammy
         }
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ Scanner levels: Real-time subscription active');
-        } else if (status === 'CLOSED') {
-          console.log('⚠️ Scanner levels: Real-time subscription closed');
-        }
+        // Removed subscription status logs - not needed for normal operation
+        // Only log errors if needed
       });
 
     return () => {

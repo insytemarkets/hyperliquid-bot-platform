@@ -7,7 +7,7 @@ import { hyperliquidService } from '../services/hyperliquid';
 
 const MIN_VOLUME = 50_000_000; // $50M
 const MAX_DECLINE_THRESHOLD = -10; // -10%
-const TOP_TOKENS_COUNT = 15;
+const TOP_TOKENS_COUNT = 10; // Reduced from 15 to 10
 
 // Cache for token list (refresh every 30 seconds)
 let tokenListCache: { tokens: any[]; timestamp: number } | null = null;
@@ -20,6 +20,12 @@ const CANDLE_CACHE_TTL = 300_000; // 5 minutes - candles are historical data
 // Track failed fetches to prevent spam
 const failedFetches: Map<string, number> = new Map();
 const FAILED_FETCH_COOLDOWN = 60_000; // Don't retry failed fetches for 1 minute
+
+// Circuit breaker: Stop fetching if too many errors
+let consecutiveErrors = 0;
+const MAX_CONSECUTIVE_ERRORS = 5;
+let circuitBreakerOpen = false;
+const CIRCUIT_BREAKER_RESET_TIME = 60_000; // 1 minute
 
 export function useScanner(activeTab: ScannerTab, isLive: boolean) {
   const [tokens, setTokens] = useState<ScannerToken[]>([]);
@@ -307,15 +313,23 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
   // For levels tab: fetch candles periodically (with caching) - Use HTTP API for reliability
   useEffect(() => {
-    if (!isLive || activeTab !== 'levels') return;
+    if (!isLive || activeTab !== 'levels) return;
+    if (circuitBreakerOpen) {
+      console.warn('⚠️ Circuit breaker open - skipping candle fetch due to too many errors');
+      return;
+    }
 
     const fetchLevels = async () => {
       const symbols = tokenSymbolsRef.current;
       if (symbols.length === 0) return;
+      
+      // Only process top 10 tokens (already filtered by volume)
+      const tokensToProcess = symbols.slice(0, 10);
 
       // Fetch candles for each token (with caching and rate limiting)
-      for (let i = 0; i < symbols.length; i++) {
-        const symbol = symbols[i];
+      // Only process top 10 tokens to reduce API load
+      for (let i = 0; i < tokensToProcess.length; i++) {
+        const symbol = tokensToProcess[i];
         
         // Add longer delay between tokens to prevent rate limits
         if (i > 0) {
@@ -375,14 +389,33 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               if (hasData) {
                 candleCache.set(cacheKey, { candles: candlesByTimeframe, timestamp: now });
                 failedFetches.delete(symbol); // Clear failure flag on success
+                consecutiveErrors = 0; // Reset error counter on success
               } else {
                 // No data received, mark as failed
                 failedFetches.set(symbol, now);
               }
             } catch (err) {
+              consecutiveErrors++;
+              
+              // Open circuit breaker if too many consecutive errors
+              if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                circuitBreakerOpen = true;
+                console.error(`🚨 Circuit breaker opened after ${consecutiveErrors} consecutive errors`);
+                // Reset circuit breaker after timeout
+                setTimeout(() => {
+                  circuitBreakerOpen = false;
+                  consecutiveErrors = 0;
+                  console.log('✅ Circuit breaker reset - resuming candle fetches');
+                }, CIRCUIT_BREAKER_RESET_TIME);
+              }
+              
               // Only log error once per symbol per cooldown period
               if (!lastFailure || now - lastFailure >= FAILED_FETCH_COOLDOWN) {
-                console.error(`Error fetching candles for ${symbol}:`, err);
+                // Suppress "Failed to fetch" errors - they're network/rate limit issues
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('429')) {
+                  console.error(`Error fetching candles for ${symbol}:`, err);
+                }
               }
               failedFetches.set(symbol, now);
               
@@ -518,11 +551,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       setLastUpdate(new Date());
     };
 
-    // Fetch levels initially and then every 10 minutes (candles don't change until candle closes)
+    // Fetch levels initially and then every 5 minutes (candles don't change until candle closes)
     // Use WebSocket for real-time price updates, HTTP only for historical candles
-    // Longer interval to reduce API calls
+    // 5 minutes is reasonable - candles only update when they close
     fetchLevels();
-    const interval = setInterval(fetchLevels, 600_000); // 10 minutes - candles are historical data
+    const interval = setInterval(fetchLevels, 300_000); // 5 minutes - candles are historical data
 
     return () => clearInterval(interval);
   }, [isLive, activeTab, tokens, updateTokenData]);

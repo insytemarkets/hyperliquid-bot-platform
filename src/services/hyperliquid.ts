@@ -537,27 +537,27 @@ class HyperliquidService {
       const results: Record<string, Array<any>> = {};
 
       // Calculate start times and limits for each timeframe
+      // Use smaller limits to reduce API load
       const timeframeConfig: Record<string, { startTime: number; limit: number }> = {
-        '5m': { startTime: endTime - (100 * 5 * 60 * 1000), limit: 100 },
-        '15m': { startTime: endTime - (100 * 15 * 60 * 1000), limit: 100 },
-        '30m': { startTime: endTime - (100 * 30 * 60 * 1000), limit: 100 },
-        '1h': { startTime: endTime - (200 * 60 * 60 * 1000), limit: 200 },
-        '4h': { startTime: endTime - (200 * 4 * 60 * 60 * 1000), limit: 200 },
-        '12h': { startTime: endTime - (200 * 12 * 60 * 60 * 1000), limit: 200 },
-        '1d': { startTime: endTime - (200 * 24 * 60 * 60 * 1000), limit: 200 },
+        '5m': { startTime: endTime - (50 * 5 * 60 * 1000), limit: 50 }, // Reduced from 100
+        '15m': { startTime: endTime - (50 * 15 * 60 * 1000), limit: 50 }, // Reduced from 100
+        '30m': { startTime: endTime - (50 * 30 * 60 * 1000), limit: 50 }, // Reduced from 100
+        '1h': { startTime: endTime - (100 * 60 * 60 * 1000), limit: 100 }, // Reduced from 200
+        '4h': { startTime: endTime - (100 * 4 * 60 * 60 * 1000), limit: 100 }, // Reduced from 200
+        '12h': { startTime: endTime - (100 * 12 * 60 * 60 * 1000), limit: 100 }, // Reduced from 200
+        '1d': { startTime: endTime - (100 * 24 * 60 * 60 * 1000), limit: 100 }, // Reduced from 200
       };
 
-      // Fetch candles sequentially with delays to prevent rate limits
-      // (Candles are historical data, so parallel fetching isn't critical)
+      // Fetch candles sequentially with longer delays to prevent rate limits
       const responses: Array<{ tf: string; candles: any[] }> = [];
       
       for (let i = 0; i < timeframes.length; i++) {
         const tf = timeframes[i];
         const config = timeframeConfig[tf];
         
-        // Add delay between requests (except first one)
+        // Longer delay between requests to avoid rate limits
         if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
         }
 
         if (!config) {
@@ -566,18 +566,36 @@ class HyperliquidService {
         }
 
         try {
-          const candles = await this.getCandleSnapshot(
-            coin,
-            tf,
-            config.startTime,
-            endTime
-          );
+          // Use HTTP API with retry logic
+          let retries = 3;
+          let candles: any = null;
+          
+          while (retries > 0 && !candles) {
+            try {
+              candles = await this.getCandleSnapshot(
+                coin,
+                tf,
+                config.startTime,
+                endTime
+              );
+              break; // Success
+            } catch (error: any) {
+              retries--;
+              if (retries > 0) {
+                // Wait before retry (exponential backoff)
+                await new Promise((resolve) => setTimeout(resolve, 2000 * (4 - retries)));
+              } else {
+                // Final attempt failed - suppress 429 errors
+                if (error?.status !== 429 && error?.code !== 429) {
+                  console.error(`Error fetching ${tf} candles for ${coin}:`, error);
+                }
+              }
+            }
+          }
+          
           responses.push({ tf, candles: Array.isArray(candles) ? candles : [] });
         } catch (error: any) {
-          // Suppress error logging for rate limits (429) - they're expected with many requests
-          if (error?.status !== 429 && error?.code !== 429) {
-            console.error(`Error fetching ${tf} candles for ${coin}:`, error);
-          }
+          // Fallback: return empty array
           responses.push({ tf, candles: [] });
         }
       }

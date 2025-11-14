@@ -317,9 +317,9 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       for (let i = 0; i < symbols.length; i++) {
         const symbol = symbols[i];
         
-        // Add delay between tokens to prevent rate limits
+        // Add longer delay between tokens to prevent rate limits
         if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay per token
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay per token
         }
 
         try {
@@ -519,10 +519,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       setLastUpdate(new Date());
     };
 
-    // Fetch levels initially and then every 5 minutes (candles don't change until candle closes)
+    // Fetch levels initially and then every 10 minutes (candles don't change until candle closes)
     // Use WebSocket for real-time price updates, HTTP only for historical candles
+    // Longer interval to reduce API calls
     fetchLevels();
-    const interval = setInterval(fetchLevels, 300_000); // 5 minutes - candles are historical data
+    const interval = setInterval(fetchLevels, 600_000); // 10 minutes - candles are historical data
 
     return () => clearInterval(interval);
   }, [isLive, activeTab, tokens, updateTokenData]);

@@ -347,12 +347,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
               });
             }
           } else {
-            // Fetch candles for key timeframes only (reduced from 6 to 4)
-            const timeframes: Array<'15m' | '30m' | '1h' | '4h'> = [
+            // Fetch candles for key timeframes only (reduced to 3 to prevent rate limits)
+            const timeframes: Array<'15m' | '30m' | '1h'> = [
               '15m',
               '30m',
               '1h',
-              '4h',
             ];
 
             try {

@@ -331,14 +331,15 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       // Get Python API URL from environment or use default
       const SCANNER_API_URL = process.env.REACT_APP_SCANNER_API_URL || 'https://scanner-api.onrender.com';
 
-      // Fetch candles for each token (with caching and rate limiting)
-      // Only process top 10 tokens to reduce API load
+      // Fetch levels from Python backend API for each token
       for (let i = 0; i < tokensToProcess.length; i++) {
         const symbol = tokensToProcess[i];
+        const token = tokens.find((t) => t.symbol === symbol);
+        if (!token) continue;
         
-        // Add longer delay between tokens to prevent rate limits
+        // Add delay between requests to avoid overwhelming the API
         if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay per token
+          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
         }
 
         try {
@@ -346,225 +347,83 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           const cached = candleCache.get(cacheKey);
           const now = Date.now();
 
-          let candlesByTimeframe: Record<string, any[]> = {};
-
-          // Check if we should skip fetching (recent failure)
-          const lastFailure = failedFetches.get(symbol);
-          const shouldSkip = lastFailure && now - lastFailure < FAILED_FETCH_COOLDOWN;
-
+          // Check cache first
           if (cached && now - cached.timestamp < CANDLE_CACHE_TTL) {
-            // Use cached data
-            candlesByTimeframe = cached.candles;
-          } else if (shouldSkip) {
-            // Skip fetching if we recently failed
-            if (cached) {
-              candlesByTimeframe = cached.candles; // Use stale cache
-            } else {
-              // Initialize empty arrays
-              ['15m', '30m', '1h', '4h'].forEach((tf) => {
-                candlesByTimeframe[tf] = [];
-              });
-            }
-          } else {
-            // Fetch candles for key timeframes only (reduced to 3 to prevent rate limits)
-            const timeframes: Array<'15m' | '30m' | '1h'> = [
-              '15m',
-              '30m',
-              '1h',
-            ];
-
-            try {
-              // Use getMultiTimeframeCandles which handles batching and errors better
-              console.log(`📊 Fetching candles for ${symbol}...`);
-              const candlesData = await hyperliquidService.getMultiTimeframeCandles(
-                symbol,
-                timeframes
-              );
-
-              // Debug: Log what we got
-              console.log(`📊 ${symbol} candle data received:`, Object.keys(candlesData).map(tf => `${tf}: ${Array.isArray(candlesData[tf]) ? candlesData[tf].length : 0} candles`).join(', '));
-
-              // Ensure all timeframes are arrays
-              timeframes.forEach((tf) => {
-                const candles = candlesData[tf];
-                if (Array.isArray(candles) && candles.length > 0) {
-                  // Check if candles have the expected format (check for time property or any property)
-                  const sample = candles[0] as any;
-                  if (sample && (sample.time !== undefined || sample.t !== undefined || sample.startTime !== undefined || sample.open !== undefined)) {
-                    candlesByTimeframe[tf] = candles;
-                    console.log(`✅ ${symbol} ${tf}: ${candles.length} candles, sample:`, sample);
-                  } else {
-                    console.warn(`⚠️ ${symbol} ${tf}: Unexpected candle format:`, sample);
-                    candlesByTimeframe[tf] = [];
-                  }
-                } else {
-                  candlesByTimeframe[tf] = [];
-                }
-              });
-
-              // Only cache if we got at least some data
-              const hasData = Object.values(candlesByTimeframe).some(
-                (candles) => candles.length > 0
-              );
-              if (hasData) {
-                candleCache.set(cacheKey, { candles: candlesByTimeframe, timestamp: now });
-                failedFetches.delete(symbol); // Clear failure flag on success
-                consecutiveErrors = 0; // Reset error counter on success
-              } else {
-                // No data received, mark as failed
-                failedFetches.set(symbol, now);
-              }
-            } catch (err) {
-              consecutiveErrors++;
-              
-              // Open circuit breaker if too many consecutive errors
-              if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-                circuitBreakerOpen = true;
-                console.error(`🚨 Circuit breaker opened after ${consecutiveErrors} consecutive errors`);
-                // Reset circuit breaker after timeout
-                setTimeout(() => {
-                  circuitBreakerOpen = false;
-                  consecutiveErrors = 0;
-                  console.log('✅ Circuit breaker reset - resuming candle fetches');
-                }, CIRCUIT_BREAKER_RESET_TIME);
-              }
-              
-              // Only log error once per symbol per cooldown period
-              if (!lastFailure || now - lastFailure >= FAILED_FETCH_COOLDOWN) {
-                // Suppress "Failed to fetch" errors - they're network/rate limit issues
-                const errorMsg = err instanceof Error ? err.message : String(err);
-                if (!errorMsg.includes('Failed to fetch') && !errorMsg.includes('429')) {
-                  console.error(`Error fetching candles for ${symbol}:`, err);
-                }
-              }
-              failedFetches.set(symbol, now);
-              
-              // Use cached data if available, even if expired
-              if (cached) {
-                candlesByTimeframe = cached.candles;
-              } else {
-                // Initialize empty arrays for all timeframes
-                timeframes.forEach((tf) => {
-                  candlesByTimeframe[tf] = [];
-                });
-              }
+            // Use cached levels data
+            if (cached.levelsData) {
+              updateTokenData(symbol, { levels: cached.levelsData });
+              continue;
             }
           }
 
-          // Calculate levels
-          const token = tokens.find((t) => t.symbol === symbol);
-          if (!token) continue;
+          // Fetch levels from Python backend
+          console.log(`📊 Fetching levels for ${symbol} from Python API...`);
+          const response = await fetch(`${SCANNER_API_URL}/api/scanner/levels`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              coin: symbol,
+              currentPrice: token.price,
+              timeframes: ['15m', '30m', '1h'],
+            }),
+          });
 
-          const allLevelsByTimeframe: Record<string, { support: any; resistance: any }> = {};
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          const data = await response.json();
           
-          // Ensure we only process arrays
-          let hasAnyCandles = false;
-          Object.entries(candlesByTimeframe).forEach(([tf, candles]) => {
-            if (Array.isArray(candles) && candles.length > 0) {
-              hasAnyCandles = true;
-              try {
-                const levels = calculateLevels(candles, tf, token.price);
-                allLevelsByTimeframe[tf] = {
-                  support: levels.support,
-                  resistance: levels.resistance,
-                };
-                if (levels.support || levels.resistance) {
-                  console.log(`✅ ${symbol} ${tf}: Support=${levels.support?.price || 'N/A'}, Resistance=${levels.resistance?.price || 'N/A'}`);
-                }
-              } catch (err) {
-                console.error(`Error calculating levels for ${symbol} ${tf}:`, err);
-              }
-            }
-          });
+          if (data.success && data.allLevelsByTimeframe) {
+            // Convert Python API response to frontend format
+            const closestLevel = data.closestLevel ? {
+              price: data.closestLevel.price,
+              timeframe: data.closestLevel.timeframe,
+              type: data.closestLevel.type,
+              distance: data.closestLevel.distance,
+            } : null;
 
-          if (!hasAnyCandles) {
-            console.warn(`⚠️ ${symbol}: No candle data available for any timeframe`);
-            continue; // Skip this token if no candles
-          }
-
-          const closestLevel = findClosestLevel(allLevelsByTimeframe, token.price);
-
-          // Find strongest support/resistance using distance + weight (like reference implementation)
-          const supportCandidates: Array<{price: number, weight: number, timeframe: string}> = [];
-          const resistanceCandidates: Array<{price: number, weight: number, timeframe: string}> = [];
-
-          Object.entries(allLevelsByTimeframe).forEach(([tf, levels]) => {
-            if (levels && levels.support && levels.support.price < token.price) {
-              supportCandidates.push({
-                price: levels.support.price,
-                weight: levels.support.weight,
-                timeframe: tf
-              });
-            }
-            if (levels && levels.resistance && levels.resistance.price > token.price) {
-              resistanceCandidates.push({
-                price: levels.resistance.price,
-                weight: levels.resistance.weight,
-                timeframe: tf
-              });
-            }
-          });
-
-          // Find strongest support (closest to price, then highest weight)
-          const findStrongestLevel = (candidates: Array<{price: number, weight: number, timeframe: string}>, isSupport: boolean): Level | null => {
-            if (candidates.length === 0) return null;
-            
-            const sorted = candidates
-              .map(c => ({
-                ...c,
-                distance: Math.abs(token.price - c.price) / token.price
-              }))
-              .sort((a, b) => {
-                // First priority: closer to price
-                const distanceDiff = a.distance - b.distance;
-                if (Math.abs(distanceDiff) > 0.01) return distanceDiff; // If distance differs by >1%
-                
-                // Second priority: higher timeframe weight
-                return b.weight - a.weight;
-              });
-            
-            const selected = sorted[0];
-            return {
-              price: selected.price,
-              timeframe: selected.timeframe,
-              type: (isSupport ? 'support' : 'resistance') as 'support' | 'resistance',
-              touches: 1,
-              weight: selected.weight,
+            const levelsData: LevelsData = {
+              closestLevel,
+              support: data.support ? {
+                price: data.support.price,
+                timeframe: data.support.timeframe,
+                type: 'support',
+                touches: 1,
+                weight: data.support.weight,
+              } : null,
+              resistance: data.resistance ? {
+                price: data.resistance.price,
+                timeframe: data.resistance.timeframe,
+                type: 'resistance',
+                touches: 1,
+                weight: data.resistance.weight,
+              } : null,
+              priceSpread: 0,
+              markPrice: token.price,
             };
-          };
 
-          const strongestSupport = findStrongestLevel(supportCandidates, true);
-          const strongestResistance = findStrongestLevel(resistanceCandidates, false);
-
-          // Log what we found
-          if (strongestSupport || strongestResistance || closestLevel) {
-            console.log(`📊 ${symbol} Levels:`, {
-              closest: closestLevel ? `${closestLevel.type} @ ${closestLevel.price} (${closestLevel.distance.toFixed(2)}%)` : 'N/A',
-              support: strongestSupport ? `$${strongestSupport.price.toFixed(2)} (${strongestSupport.timeframe})` : 'N/A',
-              resistance: strongestResistance ? `$${strongestResistance.price.toFixed(2)} (${strongestResistance.timeframe})` : 'N/A',
+            // Cache the result
+            candleCache.set(cacheKey, { 
+              levelsData, 
+              timestamp: now 
             });
+            
+            updateTokenData(symbol, { levels: levelsData });
+            console.log(`✅ ${symbol}: Levels calculated - Support=${data.support?.price || 'N/A'}, Resistance=${data.resistance?.price || 'N/A'}`);
+          } else {
+            console.warn(`⚠️ ${symbol}: No levels data in API response`);
           }
-
-          const levelsData: LevelsData = {
-            closestLevel: closestLevel
-              ? {
-                  price: closestLevel.price,
-                  timeframe: closestLevel.timeframe,
-                  type: closestLevel.type,
-                  distance: closestLevel.distance,
-                }
-              : null,
-            support: strongestSupport,
-            resistance: strongestResistance,
-            priceSpread: 0,
-            indexPrice: token.price,
-            markPrice: token.price,
-          };
-
-          updateTokenData(symbol, { levels: levelsData });
+          
         } catch (err) {
-          console.error(`Error fetching levels for ${symbol}:`, err);
-          // Don't crash - continue with other tokens
+          console.error(`❌ Error fetching levels for ${symbol}:`, err);
+          // Use cached data if available
+          const cached = candleCache.get(`${symbol}-levels`);
+          if (cached && cached.levelsData) {
+            updateTokenData(symbol, { levels: cached.levelsData });
+          }
         }
       }
 

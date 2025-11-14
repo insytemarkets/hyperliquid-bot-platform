@@ -313,7 +313,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
   // For levels tab: fetch candles periodically (with caching) - Use HTTP API for reliability
   useEffect(() => {
-    if (!isLive || activeTab !== 'levels) return;
+    if (!isLive || activeTab !== 'levels') return;
     if (circuitBreakerOpen) {
       console.warn('⚠️ Circuit breaker open - skipping candle fetch due to too many errors');
       return;

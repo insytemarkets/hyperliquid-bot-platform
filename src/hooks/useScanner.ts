@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import * as hl from '@nktkas/hyperliquid';
 import { ScannerToken, ScannerTab } from '../types/scanner';
 import { calculateLevels, findClosestLevel } from '../services/scanner/levelsCalculator';
-import { LiquidityData, LevelsData, Trade } from '../types/scanner';
+import { LiquidityData, LevelsData, Trade, Level } from '../types/scanner';
 import { hyperliquidService } from '../services/hyperliquid';
 
 const MIN_VOLUME = 50_000_000; // $50M
@@ -454,7 +454,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           });
 
           // Find strongest support (closest to price, then highest weight)
-          const findStrongestLevel = (candidates: Array<{price: number, weight: number, timeframe: string}>, isSupport: boolean) => {
+          const findStrongestLevel = (candidates: Array<{price: number, weight: number, timeframe: string}>, isSupport: boolean): Level | null => {
             if (candidates.length === 0) return null;
             
             const sorted = candidates
@@ -475,7 +475,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
             return {
               price: selected.price,
               timeframe: selected.timeframe,
-              type: isSupport ? 'support' : 'resistance',
+              type: (isSupport ? 'support' : 'resistance') as 'support' | 'resistance',
               touches: 1,
               weight: selected.weight,
             };

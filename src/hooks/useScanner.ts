@@ -320,8 +320,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     if (!isLive || activeTab !== 'levels') return;
     if (circuitBreakerOpen) {
       console.warn('⚠️ Circuit breaker open - skipping candle fetch due to too many errors');
+      console.log('💡 To reset: Wait 1 minute or refresh the page');
       return;
     }
+    
+    console.log('🔍 Starting levels fetch, circuit breaker status:', circuitBreakerOpen);
 
     const fetchLevels = async () => {
       const symbols = tokenSymbolsRef.current;
@@ -374,16 +377,31 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
             try {
               // Use getMultiTimeframeCandles which handles batching and errors better
+              console.log(`📊 Fetching candles for ${symbol}...`);
               const candlesData = await hyperliquidService.getMultiTimeframeCandles(
                 symbol,
                 timeframes
               );
 
+              // Debug: Log what we got
+              console.log(`📊 ${symbol} candle data received:`, Object.keys(candlesData).map(tf => `${tf}: ${Array.isArray(candlesData[tf]) ? candlesData[tf].length : 0} candles`).join(', '));
+
               // Ensure all timeframes are arrays
               timeframes.forEach((tf) => {
-                candlesByTimeframe[tf] = Array.isArray(candlesData[tf])
-                  ? candlesData[tf]
-                  : [];
+                const candles = candlesData[tf];
+                if (Array.isArray(candles) && candles.length > 0) {
+                  // Check if candles have the expected format
+                  const sample = candles[0];
+                  if (sample && (sample.time || sample.t || sample.startTime)) {
+                    candlesByTimeframe[tf] = candles;
+                    console.log(`✅ ${symbol} ${tf}: ${candles.length} candles, sample:`, sample);
+                  } else {
+                    console.warn(`⚠️ ${symbol} ${tf}: Unexpected candle format:`, sample);
+                    candlesByTimeframe[tf] = [];
+                  }
+                } else {
+                  candlesByTimeframe[tf] = [];
+                }
               });
 
               // Only cache if we got at least some data

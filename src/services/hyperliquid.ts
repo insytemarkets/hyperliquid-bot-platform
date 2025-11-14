@@ -205,11 +205,21 @@ class HyperliquidService {
         startTime,
         endTime,
       });
+      
+      // Debug: Log response format to understand structure
+      if (response && Array.isArray(response) && response.length > 0) {
+        console.log(`✅ Candle snapshot for ${coin} ${interval}: Got ${response.length} candles, sample:`, response[0]);
+      } else if (response) {
+        console.log(`⚠️ Candle snapshot for ${coin} ${interval}: Unexpected format:`, typeof response, Array.isArray(response) ? 'array' : 'object', Object.keys(response || {}));
+      } else {
+        console.warn(`⚠️ Candle snapshot for ${coin} ${interval}: Empty response`);
+      }
+      
       return response;
     } catch (error: any) {
       // Suppress error logging for rate limits (429) - they're expected
       if (error?.status !== 429 && error?.code !== 429) {
-        console.error(`Error fetching candle snapshot for ${coin}:`, error);
+        console.error(`Error fetching candle snapshot for ${coin} ${interval}:`, error);
       }
       throw error;
     }

@@ -267,8 +267,10 @@ def get_top_tokens_by_volume() -> List[dict]:
     Returns list of {coin, price, volume, change24h}
     """
     try:
+        logger.debug("📡 Fetching token list from Hyperliquid...")
         response = info.meta_and_asset_ctxs()
         if not response or not response[1]:
+            logger.warning("⚠️ Empty response from Hyperliquid API")
             return []
         
         token_list = []
@@ -293,10 +295,14 @@ def get_top_tokens_by_volume() -> List[dict]:
         
         # Sort by volume and return top N
         token_list.sort(key=lambda x: x['volume'], reverse=True)
-        return token_list[:TOP_TOKENS_COUNT]
+        top_tokens = token_list[:TOP_TOKENS_COUNT]
+        logger.info(f"✅ Found {len(top_tokens)} tokens matching criteria: {[t['coin'] for t in top_tokens]}")
+        return top_tokens
     
     except Exception as e:
-        logger.error(f"Error fetching top tokens: {e}")
+        logger.error(f"❌ Error fetching top tokens: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 
@@ -446,14 +452,28 @@ async def update_scanner_levels():
 async def main():
     """Main entry point - runs every 30 seconds"""
     logger.info("🚀 Scanner Worker Starting...")
+    logger.info(f"📊 Configuration: Top {TOP_TOKENS_COUNT} tokens, Min Volume: ${MIN_VOLUME:,.0f}, Max Decline: {MAX_DECLINE_THRESHOLD}%")
+    logger.info(f"🔗 Supabase URL: {SUPABASE_URL[:30]}...")
     
+    # Run initial update immediately
+    logger.info("🔄 Running initial levels update...")
+    try:
+        await update_scanner_levels()
+    except Exception as e:
+        logger.error(f"❌ Initial update failed: {e}")
+    
+    # Then run every 30 seconds
     while True:
         try:
+            logger.info("⏰ Starting scheduled levels update...")
             await update_scanner_levels()
+            logger.info("✅ Scheduled update completed, waiting 30 seconds...")
             # Wait 30 seconds before next update
             await asyncio.sleep(30)  # 30 seconds
         except Exception as e:
             logger.error(f"❌ Scanner worker error: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             await asyncio.sleep(10)  # Wait 10 seconds on error before retrying
 
 

@@ -7,7 +7,8 @@ import { hyperliquidService } from '../services/hyperliquid';
 
 const MIN_VOLUME = 50_000_000; // $50M
 const MAX_DECLINE_THRESHOLD = -10; // -10%
-const TOP_TOKENS_COUNT = 10; // Reduced from 15 to 10
+const TOP_TOKENS_COUNT = 15; // Keep at 15 for liquidity scanner
+const TOP_TOKENS_FOR_LEVELS = 10; // Reduced to 10 for levels scanner only
 
 // Cache for token list (refresh every 30 seconds)
 let tokenListCache: { tokens: any[]; timestamp: number } | null = null;
@@ -21,7 +22,7 @@ const CANDLE_CACHE_TTL = 300_000; // 5 minutes - candles are historical data
 const failedFetches: Map<string, number> = new Map();
 const FAILED_FETCH_COOLDOWN = 60_000; // Don't retry failed fetches for 1 minute
 
-// Circuit breaker: Stop fetching if too many errors
+// Circuit breaker: Stop fetching if too many errors (LEVELS ONLY)
 let consecutiveErrors = 0;
 const MAX_CONSECUTIVE_ERRORS = 5;
 let circuitBreakerOpen = false;
@@ -78,10 +79,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
   }, []);
 
   // Fetch initial token list (cached)
-  const fetchTokenList = useCallback(async () => {
+  const fetchTokenList = useCallback(async (limit: number = TOP_TOKENS_COUNT) => {
     const now = Date.now();
     if (tokenListCache && now - tokenListCache.timestamp < TOKEN_LIST_CACHE_TTL) {
-      return tokenListCache.tokens;
+      // Return cached tokens, but slice to requested limit
+      return tokenListCache.tokens.slice(0, limit);
     }
 
     try {
@@ -117,13 +119,13 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
 
       const topTokens = tokenList
         .sort((a, b) => b.volume - a.volume)
-        .slice(0, TOP_TOKENS_COUNT);
+        .slice(0, TOP_TOKENS_COUNT); // Cache full list
 
       tokenListCache = { tokens: topTokens, timestamp: now };
-      return topTokens;
+      return topTokens.slice(0, limit); // Return requested limit
     } catch (err) {
       console.error('Error fetching token list:', err);
-      return tokenListCache?.tokens || [];
+      return tokenListCache?.tokens.slice(0, limit) || [];
     }
   }, []);
 
@@ -204,7 +206,9 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     const initializeTokens = async () => {
       try {
         setLoading(true);
-        const tokenList = await fetchTokenList();
+        // Use full list for liquidity, limited for levels
+        const limit = activeTab === 'levels' ? TOP_TOKENS_FOR_LEVELS : TOP_TOKENS_COUNT;
+        const tokenList = await fetchTokenList(limit);
         tokenSymbolsRef.current = tokenList.map((t) => t.coin);
 
         // Initialize token state
@@ -323,8 +327,8 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       const symbols = tokenSymbolsRef.current;
       if (symbols.length === 0) return;
       
-      // Only process top 10 tokens (already filtered by volume)
-      const tokensToProcess = symbols.slice(0, 10);
+      // Only process top 10 tokens for levels (already filtered in fetchTokenList)
+      const tokensToProcess = symbols.slice(0, TOP_TOKENS_FOR_LEVELS);
 
       // Fetch candles for each token (with caching and rate limiting)
       // Only process top 10 tokens to reduce API load

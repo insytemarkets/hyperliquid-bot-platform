@@ -322,7 +322,7 @@ def get_levels():
             ))
             strongest_resistance = resistance_candidates[0]
         
-        return jsonify({
+        response = jsonify({
             'success': True,
             'coin': coin,
             'currentPrice': current_price,
@@ -331,6 +331,11 @@ def get_levels():
             'closestLevel': closest_level,
             'allLevelsByTimeframe': all_levels_by_timeframe,
         })
+        # Add CORS headers explicitly
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
         
     except Exception as e:
         logger.error(f"❌ Error in get_levels: {e}")

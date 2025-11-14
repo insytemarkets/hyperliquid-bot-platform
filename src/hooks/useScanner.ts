@@ -402,6 +402,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
                 weight: data.resistance.weight,
               } : null,
               priceSpread: 0,
+              indexPrice: token.price,
               markPrice: token.price,
             };
 

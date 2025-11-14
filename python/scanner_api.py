@@ -223,37 +223,47 @@ def get_levels():
         end_time = int(datetime.now().timestamp() * 1000)
         all_levels_by_timeframe = {}
         
-        # Fetch candles for each timeframe
+        # Fetch candles for each timeframe using the same method as multi-timeframe breakout
+        # Reuse the proven get_candles_cached pattern
         for tf in timeframes:
             try:
-                # Calculate start time based on timeframe
+                # Calculate start time based on timeframe (same as bot_engine.py)
                 tf_minutes = {
                     '5m': 5, '15m': 15, '30m': 30, '1h': 60,
                     '4h': 240, '12h': 720, '1d': 1440
                 }.get(tf, 60)
                 
-                # Fetch enough candles (50-100 depending on timeframe)
+                # Fetch enough candles for levels calculation (50-100 depending on timeframe)
+                # Same limits as multi-timeframe breakout strategy uses
                 limit = 100 if tf in ['1h', '4h', '12h', '1d'] else 50
                 start_time = end_time - (limit * tf_minutes * 60 * 1000)
                 
-                # Fetch candles using Hyperliquid SDK
+                # Use the same method as bot_engine.py - add rate limiting delay
+                import time
+                time.sleep(1.5)  # Same delay as get_candles_cached uses
+                
+                # Fetch candles using Hyperliquid SDK (same as bot_engine.py)
                 candles = info.candles_snapshot(coin, tf, start_time, end_time)
                 
                 if candles and len(candles) > 0:
-                    # Calculate levels for this timeframe
-                    levels = calculate_levels(candles, tf, current_price)
-                    all_levels_by_timeframe[tf] = {
-                        'support': levels['support'],
-                        'resistance': levels['resistance'],
-                    }
-                    logger.debug(f"✅ {coin} {tf}: Support={levels['support']['price'] if levels['support'] else 'N/A'}, Resistance={levels['resistance']['price'] if levels['resistance'] else 'N/A'}")
+                    # Use only closed candles (exclude current incomplete candle)
+                    # Same logic as multi-timeframe breakout strategy
+                    closed_candles = candles[:-1] if len(candles) > 1 else candles
+                    
+                    if len(closed_candles) > 0:
+                        # Calculate levels for this timeframe
+                        levels = calculate_levels(closed_candles, tf, current_price)
+                        all_levels_by_timeframe[tf] = {
+                            'support': levels['support'],
+                            'resistance': levels['resistance'],
+                        }
+                        logger.debug(f"✅ {coin} {tf}: {len(closed_candles)} closed candles | Support={levels['support']['price'] if levels['support'] else 'N/A'}, Resistance={levels['resistance']['price'] if levels['resistance'] else 'N/A'}")
+                    else:
+                        all_levels_by_timeframe[tf] = {'support': None, 'resistance': None}
+                        logger.warning(f"⚠️ {coin} {tf}: No closed candles")
                 else:
                     all_levels_by_timeframe[tf] = {'support': None, 'resistance': None}
                     logger.warning(f"⚠️ {coin} {tf}: No candles returned")
-                
-                # Small delay to avoid rate limits
-                import time
-                time.sleep(0.5)
                 
             except Exception as e:
                 logger.error(f"❌ Error fetching {coin} {tf} candles: {e}")

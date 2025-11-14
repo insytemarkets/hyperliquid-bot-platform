@@ -14,8 +14,8 @@ const TOP_TOKENS_FOR_LEVELS = 10; // Reduced to 10 for levels scanner only
 let tokenListCache: { tokens: any[]; timestamp: number } | null = null;
 const TOKEN_LIST_CACHE_TTL = 30_000; // 30 seconds
 
-// Cache for candles (refresh every 5 minutes - candles only update when they close)
-const candleCache: Map<string, { candles: any; timestamp: number }> = new Map();
+// Cache for candles/levels (refresh every 5 minutes - candles only update when they close)
+const candleCache: Map<string, { candles?: any; levelsData?: any; timestamp: number }> = new Map();
 const CANDLE_CACHE_TTL = 300_000; // 5 minutes - candles are historical data
 
 // Track failed fetches to prevent spam

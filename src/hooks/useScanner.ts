@@ -315,16 +315,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     };
   }, [isLive, activeTab, fetchTokenList, analyzeLiquidityFromTrades, updateTokenData]);
 
-  // For levels tab: fetch candles periodically (with caching) - Use HTTP API for reliability
+  // For levels tab: fetch levels from Python backend API
   useEffect(() => {
     if (!isLive || activeTab !== 'levels') return;
-    if (circuitBreakerOpen) {
-      console.warn('⚠️ Circuit breaker open - skipping candle fetch due to too many errors');
-      console.log('💡 To reset: Wait 1 minute or refresh the page');
-      return;
-    }
     
-    console.log('🔍 Starting levels fetch, circuit breaker status:', circuitBreakerOpen);
+    console.log('🔍 Starting levels fetch from Python backend');
 
     const fetchLevels = async () => {
       const symbols = tokenSymbolsRef.current;
@@ -332,6 +327,9 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       
       // Only process top 10 tokens for levels (already filtered in fetchTokenList)
       const tokensToProcess = symbols.slice(0, TOP_TOKENS_FOR_LEVELS);
+      
+      // Get Python API URL from environment or use default
+      const SCANNER_API_URL = process.env.REACT_APP_SCANNER_API_URL || 'https://scanner-api.onrender.com';
 
       // Fetch candles for each token (with caching and rate limiting)
       // Only process top 10 tokens to reduce API load
@@ -574,8 +572,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     };
 
     // Fetch levels initially and then every 5 minutes (candles don't change until candle closes)
-    // Use WebSocket for real-time price updates, HTTP only for historical candles
-    // 5 minutes is reasonable - candles only update when they close
+    // Using Python backend API for reliable candle fetching
     fetchLevels();
     const interval = setInterval(fetchLevels, 300_000); // 5 minutes - candles are historical data
 

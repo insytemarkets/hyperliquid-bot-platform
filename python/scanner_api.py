@@ -13,7 +13,14 @@ import os
 from loguru import logger
 
 app = Flask(__name__)
-CORS(app)  # Allow frontend to call this
+# Configure CORS to allow all origins (or specify your Vercel domain)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",  # Allow all origins, or specify: ["https://hyperlandbot.vercel.app"]
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Initialize Hyperliquid Info client
 info = Info(skip_ws=True)
@@ -202,8 +209,15 @@ def find_closest_level(all_levels_by_timeframe: Dict[str, dict], current_price: 
     return candidates[0]
 
 
-@app.route('/api/scanner/levels', methods=['POST'])
+@app.route('/api/scanner/levels', methods=['POST', 'OPTIONS'])
 def get_levels():
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response
     """
     Calculate levels for a token
     POST body: { coin: str, currentPrice: float, timeframes: List[str] }
@@ -320,7 +334,9 @@ def get_levels():
         
     except Exception as e:
         logger.error(f"❌ Error in get_levels: {e}")
-        return jsonify({'error': str(e)}), 500
+        response = jsonify({'error': str(e)})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
 
 
 @app.route('/health', methods=['GET'])

@@ -4,6 +4,7 @@ import { ScannerToken, ScannerTab } from '../types/scanner';
 import { calculateLevels, findClosestLevel } from '../services/scanner/levelsCalculator';
 import { LiquidityData, LevelsData, Trade, Level } from '../types/scanner';
 import { hyperliquidService } from '../services/hyperliquid';
+import { supabase } from '../services/supabase/supabaseClient';
 
 const MIN_VOLUME = 50_000_000; // $50M
 const MAX_DECLINE_THRESHOLD = -10; // -10%
@@ -315,11 +316,11 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
     };
   }, [isLive, activeTab, fetchTokenList, analyzeLiquidityFromTrades, updateTokenData]);
 
-  // For levels tab: fetch levels from Python backend API
+  // For levels tab: fetch levels from Supabase (written by Python worker)
   useEffect(() => {
     if (!isLive || activeTab !== 'levels') return;
     
-    console.log('🔍 Starting levels fetch from Python backend');
+    console.log('🔍 Starting levels fetch from Supabase');
 
     const fetchLevels = async () => {
       const symbols = tokenSymbolsRef.current;
@@ -327,116 +328,131 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
       
       // Only process top 10 tokens for levels (already filtered in fetchTokenList)
       const tokensToProcess = symbols.slice(0, TOP_TOKENS_FOR_LEVELS);
-      
-      // Get Python API URL from environment or use default
-      const SCANNER_API_URL = process.env.REACT_APP_SCANNER_API_URL || 'https://scanner-api.onrender.com';
 
-      // Fetch levels from Python backend API for each token
-      for (let i = 0; i < tokensToProcess.length; i++) {
-        const symbol = tokensToProcess[i];
-        const token = tokens.find((t) => t.symbol === symbol);
-        if (!token) continue;
-        
-        // Add delay between requests to avoid overwhelming the API
-        if (i > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500)); // 500ms delay
+      try {
+        // Fetch all scanner levels from Supabase
+        const { data: levelsData, error } = await supabase
+          .from('scanner_levels')
+          .select('*')
+          .order('updated_at', { ascending: false });
+
+        if (error) {
+          console.error('❌ Error fetching levels from Supabase:', error);
+          return;
         }
 
-        try {
-          const cacheKey = `${symbol}-levels`;
-          const cached = candleCache.get(cacheKey);
-          const now = Date.now();
-
-          // Check cache first
-          if (cached && now - cached.timestamp < CANDLE_CACHE_TTL) {
-            // Use cached levels data
-            if (cached.levelsData) {
-              updateTokenData(symbol, { levels: cached.levelsData });
-              continue;
-            }
-          }
-
-          // Fetch levels from Python backend
-          console.log(`📊 Fetching levels for ${symbol} from Python API...`);
-          const response = await fetch(`${SCANNER_API_URL}/api/scanner/levels`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              coin: symbol,
-              currentPrice: token.price,
-              timeframes: ['15m', '30m', '1h'],
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-
-          const data = await response.json();
-          
-          if (data.success && data.allLevelsByTimeframe) {
-            // Convert Python API response to frontend format
-            const closestLevel = data.closestLevel ? {
-              price: data.closestLevel.price,
-              timeframe: data.closestLevel.timeframe,
-              type: data.closestLevel.type,
-              distance: data.closestLevel.distance,
-            } : null;
-
-            const levelsData: LevelsData = {
-              closestLevel,
-              support: data.support ? {
-                price: data.support.price,
-                timeframe: data.support.timeframe,
-                type: 'support',
-                touches: 1,
-                weight: data.support.weight,
-              } : null,
-              resistance: data.resistance ? {
-                price: data.resistance.price,
-                timeframe: data.resistance.timeframe,
-                type: 'resistance',
-                touches: 1,
-                weight: data.resistance.weight,
-              } : null,
-              priceSpread: 0,
-              indexPrice: token.price,
-              markPrice: token.price,
-            };
-
-            // Cache the result
-            candleCache.set(cacheKey, { 
-              levelsData, 
-              timestamp: now 
-            });
-            
-            updateTokenData(symbol, { levels: levelsData });
-            console.log(`✅ ${symbol}: Levels calculated - Support=${data.support?.price || 'N/A'}, Resistance=${data.resistance?.price || 'N/A'}`);
-          } else {
-            console.warn(`⚠️ ${symbol}: No levels data in API response`);
-          }
-          
-        } catch (err) {
-          console.error(`❌ Error fetching levels for ${symbol}:`, err);
-          // Use cached data if available
-          const cached = candleCache.get(`${symbol}-levels`);
-          if (cached && cached.levelsData) {
-            updateTokenData(symbol, { levels: cached.levelsData });
-          }
+        if (!levelsData || levelsData.length === 0) {
+          console.warn('⚠️ No levels data in Supabase yet (worker may still be initializing)');
+          return;
         }
+
+        // Update tokens with levels data
+        for (const levelRow of levelsData) {
+          const symbol = levelRow.symbol;
+          const token = tokens.find((t) => t.symbol === symbol);
+          if (!token) continue;
+
+          // Convert Supabase format to frontend format
+          const levelsDataFormatted: LevelsData = {
+            closestLevel: levelRow.closest_level ? {
+              price: levelRow.closest_level.price,
+              timeframe: levelRow.closest_level.timeframe,
+              type: levelRow.closest_level.type,
+              distance: levelRow.closest_level.distance,
+            } : null,
+            support: levelRow.support ? {
+              price: levelRow.support.price,
+              timeframe: levelRow.support.timeframe,
+              type: 'support',
+              touches: levelRow.support.touches || 1,
+              weight: levelRow.support.weight,
+            } : null,
+            resistance: levelRow.resistance ? {
+              price: levelRow.resistance.price,
+              timeframe: levelRow.resistance.timeframe,
+              type: 'resistance',
+              touches: levelRow.resistance.touches || 1,
+              weight: levelRow.resistance.weight,
+            } : null,
+            priceSpread: 0, // Can be calculated if needed
+            indexPrice: levelRow.current_price,
+            markPrice: levelRow.current_price,
+          };
+
+          updateTokenData(symbol, { levels: levelsDataFormatted });
+        }
+
+        setLastUpdate(new Date());
+        console.log(`✅ Loaded levels for ${levelsData.length} tokens from Supabase`);
+      } catch (err) {
+        console.error('❌ Error fetching levels from Supabase:', err);
       }
-
-      setLastUpdate(new Date());
     };
 
     // Fetch levels initially and then every 5 minutes (candles don't change until candle closes)
-    // Using Python backend API for reliable candle fetching
     fetchLevels();
     const interval = setInterval(fetchLevels, 300_000); // 5 minutes - candles are historical data
 
-    return () => clearInterval(interval);
+    // Real-time subscription for levels updates (like BotLogs.tsx)
+    const channel = supabase
+      .channel('scanner_levels_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'scanner_levels',
+        },
+        (payload) => {
+          const updatedLevel = payload.new as any;
+          const symbol = updatedLevel.symbol;
+          const token = tokens.find((t) => t.symbol === symbol);
+          if (!token) return;
+
+          // Convert Supabase format to frontend format
+          const levelsDataFormatted: LevelsData = {
+            closestLevel: updatedLevel.closest_level ? {
+              price: updatedLevel.closest_level.price,
+              timeframe: updatedLevel.closest_level.timeframe,
+              type: updatedLevel.closest_level.type,
+              distance: updatedLevel.closest_level.distance,
+            } : null,
+            support: updatedLevel.support ? {
+              price: updatedLevel.support.price,
+              timeframe: updatedLevel.support.timeframe,
+              type: 'support',
+              touches: updatedLevel.support.touches || 1,
+              weight: updatedLevel.support.weight,
+            } : null,
+            resistance: updatedLevel.resistance ? {
+              price: updatedLevel.resistance.price,
+              timeframe: updatedLevel.resistance.timeframe,
+              type: 'resistance',
+              touches: updatedLevel.resistance.touches || 1,
+              weight: updatedLevel.resistance.weight,
+            } : null,
+            priceSpread: 0,
+            indexPrice: updatedLevel.current_price,
+            markPrice: updatedLevel.current_price,
+          };
+
+          updateTokenData(symbol, { levels: levelsDataFormatted });
+          setLastUpdate(new Date());
+          console.log(`🔄 Real-time update: ${symbol} levels refreshed`);
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Scanner levels: Real-time subscription active');
+        } else if (status === 'CLOSED') {
+          console.log('⚠️ Scanner levels: Real-time subscription closed');
+        }
+      });
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, [isLive, activeTab, tokens, updateTokenData]);
 
   return {

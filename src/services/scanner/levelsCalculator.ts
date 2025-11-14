@@ -157,7 +157,12 @@ function getFallbackLevels(
     return { support: null, resistance: null, allLevels: [] };
   }
 
-  const recentCandles = candles.slice(-20);
+  // Use recent candles (at least 20, or all if less)
+  const recentCandles = candles.slice(-Math.max(20, candles.length));
+  if (recentCandles.length === 0) {
+    return { support: null, resistance: null, allLevels: [] };
+  }
+
   const highs = recentCandles.map((c) => parseFloat(c.high));
   const lows = recentCandles.map((c) => parseFloat(c.low));
 

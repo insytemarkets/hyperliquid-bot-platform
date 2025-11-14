@@ -406,37 +406,92 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
           const allLevelsByTimeframe: Record<string, { support: any; resistance: any }> = {};
           
           // Ensure we only process arrays
+          let hasAnyCandles = false;
           Object.entries(candlesByTimeframe).forEach(([tf, candles]) => {
             if (Array.isArray(candles) && candles.length > 0) {
+              hasAnyCandles = true;
               try {
                 const levels = calculateLevels(candles, tf, token.price);
                 allLevelsByTimeframe[tf] = {
                   support: levels.support,
                   resistance: levels.resistance,
                 };
+                if (levels.support || levels.resistance) {
+                  console.log(`✅ ${symbol} ${tf}: Support=${levels.support?.price || 'N/A'}, Resistance=${levels.resistance?.price || 'N/A'}`);
+                }
               } catch (err) {
                 console.error(`Error calculating levels for ${symbol} ${tf}:`, err);
               }
             }
           });
 
+          if (!hasAnyCandles) {
+            console.warn(`⚠️ ${symbol}: No candle data available for any timeframe`);
+            continue; // Skip this token if no candles
+          }
+
           const closestLevel = findClosestLevel(allLevelsByTimeframe, token.price);
 
-          let strongestSupport: any = null;
-          let strongestResistance: any = null;
-          let maxSupportWeight = 0;
-          let maxResistanceWeight = 0;
+          // Find strongest support/resistance using distance + weight (like reference implementation)
+          const supportCandidates: Array<{price: number, weight: number, timeframe: string}> = [];
+          const resistanceCandidates: Array<{price: number, weight: number, timeframe: string}> = [];
 
-          Object.values(allLevelsByTimeframe).forEach((levels) => {
-            if (levels && levels.support && levels.support.weight > maxSupportWeight) {
-              strongestSupport = levels.support;
-              maxSupportWeight = levels.support.weight;
+          Object.entries(allLevelsByTimeframe).forEach(([tf, levels]) => {
+            if (levels && levels.support && levels.support.price < token.price) {
+              supportCandidates.push({
+                price: levels.support.price,
+                weight: levels.support.weight,
+                timeframe: tf
+              });
             }
-            if (levels && levels.resistance && levels.resistance.weight > maxResistanceWeight) {
-              strongestResistance = levels.resistance;
-              maxResistanceWeight = levels.resistance.weight;
+            if (levels && levels.resistance && levels.resistance.price > token.price) {
+              resistanceCandidates.push({
+                price: levels.resistance.price,
+                weight: levels.resistance.weight,
+                timeframe: tf
+              });
             }
           });
+
+          // Find strongest support (closest to price, then highest weight)
+          const findStrongestLevel = (candidates: Array<{price: number, weight: number, timeframe: string}>, isSupport: boolean) => {
+            if (candidates.length === 0) return null;
+            
+            const sorted = candidates
+              .map(c => ({
+                ...c,
+                distance: Math.abs(token.price - c.price) / token.price
+              }))
+              .sort((a, b) => {
+                // First priority: closer to price
+                const distanceDiff = a.distance - b.distance;
+                if (Math.abs(distanceDiff) > 0.01) return distanceDiff; // If distance differs by >1%
+                
+                // Second priority: higher timeframe weight
+                return b.weight - a.weight;
+              });
+            
+            const selected = sorted[0];
+            return {
+              price: selected.price,
+              timeframe: selected.timeframe,
+              type: isSupport ? 'support' : 'resistance',
+              touches: 1,
+              weight: selected.weight,
+            };
+          };
+
+          const strongestSupport = findStrongestLevel(supportCandidates, true);
+          const strongestResistance = findStrongestLevel(resistanceCandidates, false);
+
+          // Log what we found
+          if (strongestSupport || strongestResistance || closestLevel) {
+            console.log(`📊 ${symbol} Levels:`, {
+              closest: closestLevel ? `${closestLevel.type} @ ${closestLevel.price} (${closestLevel.distance.toFixed(2)}%)` : 'N/A',
+              support: strongestSupport ? `$${strongestSupport.price.toFixed(2)} (${strongestSupport.timeframe})` : 'N/A',
+              resistance: strongestResistance ? `$${strongestResistance.price.toFixed(2)} (${strongestResistance.timeframe})` : 'N/A',
+            });
+          }
 
           const levelsData: LevelsData = {
             closestLevel: closestLevel

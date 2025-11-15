@@ -375,6 +375,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
             priceSpread: 0, // Can be calculated if needed
             indexPrice: levelRow.current_price,
             markPrice: levelRow.current_price,
+            allLevelsByTimeframe: levelRow.all_levels_by_timeframe || {},
           };
 
           updateTokenData(symbol, { levels: levelsDataFormatted });
@@ -431,6 +432,7 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
             priceSpread: 0,
             indexPrice: updatedLevel.current_price,
             markPrice: updatedLevel.current_price,
+            allLevelsByTimeframe: updatedLevel.all_levels_by_timeframe || {},
           };
 
           updateTokenData(symbol, { levels: levelsDataFormatted });

@@ -57,6 +57,11 @@ export interface LevelsData {
   priceSpread: number; // Mark vs Index spread percentage
   indexPrice: number;
   markPrice: number;
+  allLevelsByTimeframe?: Record<string, {
+    support: Level | null;
+    resistance: Level | null;
+    allLevels?: Level[];
+  }>;
 }
 
 export interface ScannerToken {

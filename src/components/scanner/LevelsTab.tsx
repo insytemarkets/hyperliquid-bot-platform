@@ -235,7 +235,7 @@ const LevelsTab: React.FC<LevelsTabProps> = ({ tokens, loading }) => {
               >
                 Resistance
                 {sortField === 'resistance' && (
-                  <span className="ml-1">{sortDirection === 'asc' ? '↓'}</span>
+                  <span className="ml-1">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                 )}
               </th>
               <th

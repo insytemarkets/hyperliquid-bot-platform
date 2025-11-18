@@ -378,7 +378,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
             allLevelsByTimeframe: levelRow.all_levels_by_timeframe || {},
           };
 
-          updateTokenData(symbol, { levels: levelsDataFormatted });
+          updateTokenData(symbol, { 
+            levels: levelsDataFormatted,
+            price: levelRow.current_price 
+          });
         }
 
         setLastUpdate(new Date());
@@ -435,7 +438,10 @@ export function useScanner(activeTab: ScannerTab, isLive: boolean) {
             allLevelsByTimeframe: updatedLevel.all_levels_by_timeframe || {},
           };
 
-          updateTokenData(symbol, { levels: levelsDataFormatted });
+          updateTokenData(symbol, { 
+            levels: levelsDataFormatted,
+            price: updatedLevel.current_price 
+          });
           setLastUpdate(new Date());
           // Removed console.log for real-time updates - too spammy
         }

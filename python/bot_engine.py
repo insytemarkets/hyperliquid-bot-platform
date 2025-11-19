@@ -1297,24 +1297,55 @@ class BotInstance:
                 flow_ratio = 0.5
                 
                 try:
-                    # Fetch recent trades (last 100 trades)
-                    recent_trades = info.recent_trades({'coin': pair})
+                    # Fetch recent trades using HTTP API (more reliable than SDK method)
+                    try:
+                        response = requests.post(
+                            HYPERLIQUID_API_URL,
+                            headers={'Content-Type': 'application/json'},
+                            json={'type': 'recentTrades', 'coin': pair},
+                            timeout=5
+                        )
+                        
+                        if response.ok:
+                            recent_trades = response.json()
+                            logger.debug(f"✅ Fetched {len(recent_trades) if isinstance(recent_trades, list) else 0} recent trades for {pair}")
+                        else:
+                            logger.warning(f"⚠️ Recent trades API returned HTTP {response.status_code} for {pair}")
+                            recent_trades = None
+                    except Exception as api_error:
+                        logger.warning(f"⚠️ Failed to fetch recent trades via HTTP API for {pair}: {api_error}")
+                        # Fallback: try SDK method
+                        try:
+                            recent_trades = info.recent_trades({'coin': pair})
+                            logger.debug(f"✅ Fetched trades via SDK for {pair}")
+                        except Exception as sdk_error:
+                            logger.warning(f"⚠️ SDK method also failed for {pair}: {sdk_error}")
+                            recent_trades = None
                     
                     if recent_trades and isinstance(recent_trades, list) and len(recent_trades) > 0:
                         # Calculate net flow from trades
                         # 'B' = bid (buy), 'A' = ask (sell)
+                        trade_count = 0
                         for trade in recent_trades[:100]:  # Use last 100 trades
                             try:
-                                price = float(trade.get('px', 0)) if isinstance(trade, dict) else float(getattr(trade, 'px', 0))
-                                size = float(trade.get('sz', 0)) if isinstance(trade, dict) else float(getattr(trade, 'sz', 0))
-                                side = trade.get('side', 'B') if isinstance(trade, dict) else getattr(trade, 'side', 'B')
+                                # Handle both dict and object formats
+                                if isinstance(trade, dict):
+                                    price = float(trade.get('px', 0))
+                                    size = float(trade.get('sz', 0))
+                                    side = trade.get('side', 'B')
+                                else:
+                                    price = float(getattr(trade, 'px', 0))
+                                    size = float(getattr(trade, 'sz', 0))
+                                    side = getattr(trade, 'side', 'B')
                                 
-                                volume = price * size
-                                
-                                if side == 'B':  # Bid = buy
-                                    buy_volume += volume
-                                elif side == 'A':  # Ask = sell
-                                    sell_volume += volume
+                                if price > 0 and size > 0:
+                                    volume = price * size
+                                    trade_count += 1
+                                    
+                                    if side == 'B':  # Bid = buy
+                                        buy_volume += volume
+                                    elif side == 'A':  # Ask = sell
+                                        sell_volume += volume
                             except Exception as trade_error:
                                 logger.debug(f"Error processing trade for {pair}: {trade_error}")
                                 continue
@@ -1331,10 +1362,13 @@ class BotInstance:
                                 'flow_ratio': flow_ratio,
                                 'is_bullish': net_flow > 0  # Positive net flow = bullish
                             }
+                            logger.debug(f"✅ Calculated flow for {pair}: net_flow=${net_flow/1_000:.2f}K, buy=${buy_volume/1_000:.2f}K, sell=${sell_volume/1_000:.2f}K, ratio={flow_ratio*100:.1f}%")
+                        else:
+                            logger.debug(f"⚠️ No valid trades found for {pair} (processed {trade_count} trades)")
                     else:
-                        logger.debug(f"⚠️ No recent trades data for {pair}")
+                        logger.debug(f"⚠️ No recent trades data for {pair} (response type: {type(recent_trades)})")
                 except Exception as e:
-                    logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}")
+                    logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}", exc_info=True)
                 
                 # 3. LOG MARKET DATA (every 30 seconds)
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
@@ -1387,19 +1421,24 @@ class BotInstance:
                 
                 # 4. CHECK ENTRY CONDITIONS
                 # Entry: Price touches support AND liquidity flow is positive
-                if support_level and liquidity_flow and liquidity_flow['is_bullish']:
+                # Log debug info about why trades aren't happening
+                if not support_level:
+                    logger.debug(f"📊 {pair} No support level data from scanner - cannot trade")
+                elif not liquidity_flow:
+                    logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")
+                elif support_level and liquidity_flow:
                     support_price = support_level['price']
                     # Check if price is near support (within 0.5%)
                     support_distance_pct = abs(current_price - support_price) / support_price * 100
                     support_touch_threshold = 0.5  # 0.5% wiggle room
                     
-                    if support_distance_pct <= support_touch_threshold:
-                        # Price is at/near support AND liquidity flow is bullish
-                        # Additional checks:
-                        # - Support should be below current price (we're buying dips)
-                        # - Net flow should be positive (buying pressure)
-                        # - Flow ratio should be > 0.5 (more buying than selling)
-                        
+                    # Log why trade isn't happening
+                    if support_distance_pct > support_touch_threshold:
+                        logger.debug(f"📊 {pair} Support at ${support_price:.2f} but price too far: {support_distance_pct:.2f}% away (threshold: {support_touch_threshold}%)")
+                    elif not liquidity_flow['is_bullish']:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but flow is bearish (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
+                    else:
+                        # Price is near support AND flow is bullish - check final conditions
                         is_price_above_support = current_price >= support_price * 0.995  # Within 0.5% above support
                         is_positive_flow = net_flow > 0  # Positive net flow = buying pressure
                         
@@ -1424,15 +1463,7 @@ class BotInstance:
                                 logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                 await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                         else:
-                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support}, positive_flow={is_positive_flow} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
-                    else:
-                        logger.debug(f"📊 {pair} Support at ${support_price:.2f} but price too far: {support_distance_pct:.2f}% away (threshold: {support_touch_threshold}%)")
-                elif support_level and not liquidity_flow:
-                    logger.debug(f"📊 {pair} Has support level but no liquidity flow data available")
-                elif not support_level:
-                    logger.debug(f"📊 {pair} No support level data from scanner")
-                elif support_level and liquidity_flow and not liquidity_flow['is_bullish']:
-                    logger.debug(f"📊 {pair} At support but flow is bearish (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
+                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support} (price=${current_price:.2f}, support=${support_price:.2f}), positive_flow={is_positive_flow} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
                 
             except Exception as e:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)

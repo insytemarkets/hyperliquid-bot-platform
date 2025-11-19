@@ -51,6 +51,7 @@ const BotDetails: React.FC<BotDetailsProps> = ({ bot, strategy, isOpen }) => {
       'orderbook_imbalance_v2': 'Percentage-based order book imbalance strategy. Enters LONG when bid volume exceeds threshold (default 70%). Includes minimum hold time and cooldown period to avoid overtrading.',
       'momentum_breakout': 'Tracks 5-minute price momentum. Enters on >2% or <-2% momentum. Rides strong moves.',
       'liquidity_grab': 'Detects when price wicks below 1h/30m support levels (liquidity grab) then bounces back above support within 5 minutes. Requires 1.5x volume confirmation. Catches false breakdowns and institutional liquidity grabs.',
+      'support_liquidity': 'Buys at support levels (from scanner_levels) when liquidity flow is positive. Requires support with 2+ touches, positive orderbook flow (>5%), and volume above average. Includes partial exits at resistance (50%) and trailing stops.',
     };
     return descriptions[type] || 'Custom trading strategy';
   };

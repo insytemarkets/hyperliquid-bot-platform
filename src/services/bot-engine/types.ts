@@ -3,7 +3,7 @@
  */
 
 export type SignalType = 'BUY' | 'SELL' | 'NONE';
-export type StrategyType = 'orderbook_imbalance' | 'orderbook_imbalance_v2' | 'cross_pair_lag' | 'momentum_breakout' | 'liquidation_hunter' | 'multi_timeframe_breakout' | 'liquidity_grab' | 'custom';
+export type StrategyType = 'orderbook_imbalance' | 'orderbook_imbalance_v2' | 'cross_pair_lag' | 'momentum_breakout' | 'liquidation_hunter' | 'multi_timeframe_breakout' | 'liquidity_grab' | 'support_liquidity' | 'custom';
 export type TradingMode = 'paper' | 'live';
 export type BotStatus = 'running' | 'paused' | 'stopped' | 'error';
 export type OrderSide = 'buy' | 'sell';

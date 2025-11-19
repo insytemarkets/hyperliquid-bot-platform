@@ -56,6 +56,11 @@ const StrategyBuilder: React.FC<StrategyBuilderProps> = ({ onSave, onCancel, ini
       label: 'Liquidity Grab',
       description: 'Buys when price wicks below support (1h/30m lows) then bounces back above it within 5 minutes with volume confirmation. Catches false breakdowns and liquidity grabs.'
     },
+    {
+      value: 'support_liquidity',
+      label: 'Support Liquidity',
+      description: 'Buys at support levels when liquidity flow is positive. Uses scanner_levels data to identify strong supports (2+ touches) and orderbook analysis for liquidity confirmation. Includes partial exits at resistance and trailing stops.'
+    },
   ];
 
   const availablePairs = ['BTC', 'ETH', 'SOL', 'XRP', 'ARB', 'DOGE', 'AVAX'];

@@ -88,6 +88,16 @@ export class StrategyFactory {
           supportTimeframes: ['1h', '30m'], // Support levels to monitor
         };
       
+      case 'support_liquidity':
+        return {
+          min_support_touches: 2, // Minimum touches required for support level
+          support_distance_threshold: 0.002, // 2% max distance from current price
+          liquidity_flow_threshold: 0.05, // 5% minimum positive flow
+          partial_exit_percent: 0.5, // 50% exit at resistance
+          trailing_stop_activation: 0.002, // 0.2% profit to activate trailing stop
+          trailing_stop_buffer: 0.001, // 0.1% buffer above break-even
+        };
+      
       default:
         return {};
     }
@@ -171,6 +181,16 @@ export class StrategyFactory {
           description: 'Buys when price wicks below support then bounces back with volume confirmation. Catches false breakdowns.',
           riskLevel: 'medium',
           avgHoldTime: '30-60 seconds',
+          winRate: '70-80%',
+          recommended: true,
+        };
+      
+      case 'support_liquidity':
+        return {
+          name: 'Support Liquidity',
+          description: 'Buys at support levels when liquidity flow is positive. Uses scanner data for support identification and orderbook analysis for liquidity confirmation.',
+          riskLevel: 'medium',
+          avgHoldTime: '1-5 minutes',
           winRate: '70-80%',
           recommended: true,
         };

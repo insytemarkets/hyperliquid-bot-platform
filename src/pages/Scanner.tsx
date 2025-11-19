@@ -93,7 +93,9 @@ const Scanner: React.FC = () => {
             )}
 
             {/* Scanner Content */}
-            <div className="bg-white rounded-lg shadow">
+            <div className={`rounded-lg shadow ${
+              activeTab === 'levels' ? 'bg-gray-900' : 'bg-white'
+            }`}>
               {activeTab === 'liquidity' ? (
                 <LiquidityTab tokens={tokens} loading={loading} />
               ) : (

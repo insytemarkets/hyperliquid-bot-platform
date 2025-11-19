@@ -1370,7 +1370,7 @@ class BotInstance:
                 except Exception as e:
                     logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}", exc_info=True)
                 
-                # 3. LOG MARKET DATA (every 30 seconds)
+                # 3. LOG MARKET DATA (every 30 seconds) - UPDATE IN PLACE
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
                     # Build log message with all data
                     log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
@@ -1404,8 +1404,10 @@ class BotInstance:
                     
                     log_message = " | ".join(log_parts)
                     
-                    await self.log(
-                        'market_data',
+                    # Use log_update to update in place instead of creating new log entries
+                    await self.log_update(
+                        'market_metrics',
+                        pair,
                         log_message,
                         {
                             'pair': pair,

@@ -243,20 +243,20 @@ class BotInstance:
             logger.debug(f"Using cached market data (age: {current_time - self.last_market_data_fetch:.1f}s)")
         else:
             # Fetch fresh data
-            try:
-                all_mids = info.all_mids()
+        try:
+            all_mids = info.all_mids()
                 self.cached_market_data = all_mids
                 self.last_market_data_fetch = current_time
                 logger.debug(f"Fetched fresh market data")
-            except Exception as e:
-                logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+        except Exception as e:
+            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
                 # Use cached data if available, even if expired
                 if self.cached_market_data:
                     logger.warning(f"Using stale cache due to API error: {e}")
                     all_mids = self.cached_market_data
                 else:
-                    await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
-                    return
+            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+            return
         
         # Update last prices
         for pair in self.strategy['pairs']:
@@ -345,29 +345,29 @@ class BotInstance:
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                    await self.log(
-                        'market_data',
-                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                        {
-                            'pair': pair,
-                            'bid_depth': bid_depth,
-                            'ask_depth': ask_depth,
-                            'imbalance_ratio': imbalance_ratio,
-                            'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0])
-                        }
-                    )
+                await self.log(
+                    'market_data',
+                    f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                    {
+                        'pair': pair,
+                        'bid_depth': bid_depth,
+                        'ask_depth': ask_depth,
+                        'imbalance_ratio': imbalance_ratio,
+                        'best_bid': float(bids[0][0]),
+                        'best_ask': float(asks[0][0])
+                    }
+                )
                     self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
                     success = await self.open_position(pair, 'long', float(asks[0][0]))
                     if success:
-                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
                     success = await self.open_position(pair, 'short', float(bids[0][0]))
                     if success:
-                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
@@ -1487,12 +1487,12 @@ class BotInstance:
         """Open a new position with custom size multiplier and support/resistance metadata"""
         try:
             position_size_usd = self.strategy['position_size'] * size_multiplier  # Position size in USD with multiplier
-            stop_loss_pct = self.strategy['stop_loss_percent']
-            take_profit_pct = self.strategy['take_profit_percent']
-            
-            # Calculate SL/TP
-            if side == 'long':
-                stop_loss = price * (1 - stop_loss_pct / 100)
+        stop_loss_pct = self.strategy['stop_loss_percent']
+        take_profit_pct = self.strategy['take_profit_percent']
+        
+        # Calculate SL/TP
+        if side == 'long':
+            stop_loss = price * (1 - stop_loss_pct / 100)
                 # Use resistance level for take profit if available
                 if resistance_level and isinstance(resistance_level, dict):
                     resistance_price = float(resistance_level.get('price', 0))
@@ -1501,29 +1501,29 @@ class BotInstance:
                     else:
                         take_profit = price * (1 + take_profit_pct / 100)
                 else:
-                    take_profit = price * (1 + take_profit_pct / 100)
-            else:
-                stop_loss = price * (1 + stop_loss_pct / 100)
-                take_profit = price * (1 - take_profit_pct / 100)
-            
-            # Insert position
+            take_profit = price * (1 + take_profit_pct / 100)
+        else:
+            stop_loss = price * (1 + stop_loss_pct / 100)
+            take_profit = price * (1 - take_profit_pct / 100)
+        
+        # Insert position
             position_id = str(uuid.uuid4())
             position_size_units = position_size_usd / price if price > 0 else 0
             
-            position_data = {
+        position_data = {
                 'id': position_id,
-                'bot_id': self.bot_id,
-                'symbol': pair,
-                'side': side,
+            'bot_id': self.bot_id,
+            'symbol': pair,
+            'side': side,
                 'size': position_size_units,
-                'entry_price': price,
-                'current_price': price,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'opened_at': datetime.now().isoformat(),
-                'status': 'open'
-            }
-            
+            'entry_price': price,
+            'current_price': price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'opened_at': datetime.now().isoformat(),
+            'status': 'open'
+        }
+        
             # Store support/resistance metadata
             self.position_metadata[position_id] = {
                 'highest_profit_pct': 0.0,
@@ -1540,7 +1540,7 @@ class BotInstance:
             
             logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f} (size: {size_multiplier:.2f}x)")
             try:
-                result = supabase.table('bot_positions').insert(position_data).execute()
+        result = supabase.table('bot_positions').insert(position_data).execute()
                 
                 if hasattr(result, 'error') and result.error:
                     error_msg = str(result.error) if result.error else "Unknown error"
@@ -1555,19 +1555,19 @@ class BotInstance:
                     return False
                 
                 logger.info(f"✅ Position inserted: {position_id}")
-                
-                # Insert trade
+        
+        # Insert trade
                 trade_id = str(uuid.uuid4())
                 trade_data = {
                     'id': trade_id,
-                    'bot_id': self.bot_id,
-                    'position_id': position_id,
-                    'symbol': pair,
-                    'side': 'buy' if side == 'long' else 'sell',
+            'bot_id': self.bot_id,
+            'position_id': position_id,
+            'symbol': pair,
+            'side': 'buy' if side == 'long' else 'sell',
                     'size': position_size_units,
-                    'price': price,
-                    'executed_at': datetime.now().isoformat(),
-                    'mode': self.mode
+            'price': price,
+            'executed_at': datetime.now().isoformat(),
+            'mode': self.mode
                 }
                 
                 trade_result = supabase.table('bot_trades').insert(trade_data).execute()
@@ -1589,9 +1589,9 @@ class BotInstance:
                     'take_profit': take_profit,
                     'status': 'open'
                 })
-                
-                await self.log(
-                    'trade',
+        
+        await self.log(
+            'trade',
                     f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | Size: {size_multiplier:.2f}x | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
                     {
                         'position_id': position_id,
@@ -1678,7 +1678,7 @@ class BotInstance:
             last_update = self.last_position_update_time.get(pair, 0)
             
             if current_time - last_update >= 5:  # Update every 5 seconds
-                emoji = '💚' if pnl >= 0 else '❤️'
+            emoji = '💚' if pnl >= 0 else '❤️'
                 stop_loss = position.get('stop_loss')
                 take_profit = position.get('take_profit')
                 
@@ -1779,7 +1779,7 @@ class BotInstance:
                             }).execute()
                             
                             metadata['partial_exit_done'] = True
-                            await self.log(
+            await self.log(
                                 'trade',
                                 f"📊 Partial Exit: {pair} @ ${current_price:.2f} (Resistance) | Closed {partial_exit_percent*100:.0f}% | P&L: ${partial_pnl:.2f} ({partial_pnl_pct:+.2f}%)",
                                 {
@@ -1897,43 +1897,43 @@ class BotInstance:
     async def close_position(self, position: dict, close_price: float, reason: str):
         """Close a position"""
         try:
-            side = position['side']
-            pnl = (close_price - position['entry_price']) * position['size'] if side == 'long' else (position['entry_price'] - close_price) * position['size']
+        side = position['side']
+        pnl = (close_price - position['entry_price']) * position['size'] if side == 'long' else (position['entry_price'] - close_price) * position['size']
             pnl_pct = (pnl / (position['entry_price'] * position['size'])) * 100
         
             logger.info(f"📝 Closing position {position['id']} for {position['symbol']} @ ${close_price:.2f} ({reason})")
             
             # Update position in database
             try:
-                supabase.table('bot_positions')\
+        supabase.table('bot_positions')\
                     .update({
                         'status': 'closed', 
                         'current_price': close_price, 
                         'closed_at': datetime.now().isoformat(),
                         'unrealized_pnl': pnl
                     })\
-                    .eq('id', position['id'])\
-                    .execute()
+            .eq('id', position['id'])\
+            .execute()
                 logger.info(f"✅ Position updated in database")
             except Exception as e:
                 logger.error(f"❌ Failed to update position: {e}", exc_info=True)
                 return
         
-            # Insert closing trade
+        # Insert closing trade
             trade_id = str(uuid.uuid4())
             try:
-                supabase.table('bot_trades').insert({
+        supabase.table('bot_trades').insert({
                     'id': trade_id,
-                    'bot_id': self.bot_id,
-                    'position_id': position['id'],
-                    'symbol': position['symbol'],
-                    'side': 'sell' if side == 'long' else 'buy',
-                    'size': position['size'],
-                    'price': close_price,
-                    'pnl': pnl,
-                    'executed_at': datetime.now().isoformat(),
-                    'mode': self.mode
-                }).execute()
+            'bot_id': self.bot_id,
+            'position_id': position['id'],
+            'symbol': position['symbol'],
+            'side': 'sell' if side == 'long' else 'buy',
+            'size': position['size'],
+            'price': close_price,
+            'pnl': pnl,
+            'executed_at': datetime.now().isoformat(),
+            'mode': self.mode
+        }).execute()
                 logger.info(f"✅ Closing trade inserted: {trade_id}")
             except Exception as e:
                 logger.error(f"❌ Failed to insert closing trade: {e}", exc_info=True)
@@ -1976,11 +1976,11 @@ class BotInstance:
             self.last_position_close_time[pair] = datetime.now().timestamp()
             logger.info(f"⏸️ {pair} cooldown started - will wait {self.position_cooldown}s before next trade")
         
-            await self.log(
-                'trade',
+        await self.log(
+            'trade',
                 f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | Entry: ${position['entry_price']:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",
                 {'position_id': position['id'], 'pnl': pnl, 'pnl_pct': pnl_pct, 'reason': reason}
-            )
+        )
         except Exception as e:
             logger.error(f"❌ CRITICAL ERROR closing position: {e}", exc_info=True)
             await self.log('error', f"❌ Failed to close position: {str(e)}", {'error': str(e)})

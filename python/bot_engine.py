@@ -345,29 +345,29 @@ class BotInstance:
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                await self.log(
-                    'market_data',
-                    f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                    {
-                        'pair': pair,
-                        'bid_depth': bid_depth,
-                        'ask_depth': ask_depth,
-                        'imbalance_ratio': imbalance_ratio,
-                        'best_bid': float(bids[0][0]),
-                        'best_ask': float(asks[0][0])
-                    }
-                )
+                    await self.log(
+                        'market_data',
+                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                        {
+                            'pair': pair,
+                            'bid_depth': bid_depth,
+                            'ask_depth': ask_depth,
+                            'imbalance_ratio': imbalance_ratio,
+                            'best_bid': float(bids[0][0]),
+                            'best_ask': float(asks[0][0])
+                        }
+                    )
                     self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
                     success = await self.open_position(pair, 'long', float(asks[0][0]))
                     if success:
-                    await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
                     success = await self.open_position(pair, 'short', float(bids[0][0]))
                     if success:
-                    await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")

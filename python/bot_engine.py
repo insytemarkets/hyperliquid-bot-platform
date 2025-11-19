@@ -243,20 +243,20 @@ class BotInstance:
             logger.debug(f"Using cached market data (age: {current_time - self.last_market_data_fetch:.1f}s)")
         else:
             # Fetch fresh data
-            try:
-                all_mids = info.all_mids()
+        try:
+            all_mids = info.all_mids()
                 self.cached_market_data = all_mids
                 self.last_market_data_fetch = current_time
                 logger.debug(f"Fetched fresh market data")
-            except Exception as e:
-                logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+        except Exception as e:
+            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
                 # Use cached data if available, even if expired
                 if self.cached_market_data:
                     logger.warning(f"Using stale cache due to API error: {e}")
                     all_mids = self.cached_market_data
                 else:
-                    await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
-                    return
+            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+            return
         
         # Update last prices
         for pair in self.strategy['pairs']:
@@ -285,6 +285,8 @@ class BotInstance:
             await self.run_multi_timeframe_breakout_strategy()
         elif self.strategy['type'] == 'liquidity_grab':
             await self.run_liquidity_grab_strategy()
+        elif self.strategy['type'] == 'support_liquidity':
+            await self.run_support_liquidity_strategy()
         else:
             await self.run_default_strategy()
         
@@ -343,29 +345,29 @@ class BotInstance:
                 # Log order book analysis (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                    await self.log(
-                        'market_data',
-                        f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
-                        {
-                            'pair': pair,
-                            'bid_depth': bid_depth,
-                            'ask_depth': ask_depth,
-                            'imbalance_ratio': imbalance_ratio,
-                            'best_bid': float(bids[0][0]),
-                            'best_ask': float(asks[0][0])
-                        }
-                    )
+                await self.log(
+                    'market_data',
+                    f"📊 {pair} Order Book | Bid: {bid_depth:.2f} ({bid_depth/total_depth*100:.1f}%) | Ask: {ask_depth:.2f} ({ask_depth/total_depth*100:.1f}%) | Ratio: {imbalance_ratio:.2f}x",
+                    {
+                        'pair': pair,
+                        'bid_depth': bid_depth,
+                        'ask_depth': ask_depth,
+                        'imbalance_ratio': imbalance_ratio,
+                        'best_bid': float(bids[0][0]),
+                        'best_ask': float(asks[0][0])
+                    }
+                )
                     self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if imbalance_ratio > 3.0:  # Strong buy pressure
                     success = await self.open_position(pair, 'long', float(asks[0][0]))
                     if success:
-                        await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"🟢 LONG signal: {pair} - Strong bid pressure ({imbalance_ratio:.2f}x)", {})
                 elif imbalance_ratio < 0.33:  # Strong sell pressure
                     success = await self.open_position(pair, 'short', float(bids[0][0]))
                     if success:
-                        await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
+                    await self.log('signal', f"🔴 SHORT signal: {pair} - Strong ask pressure ({imbalance_ratio:.2f}x)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing {pair}: {e}")
@@ -572,16 +574,16 @@ class BotInstance:
                                 
                                 # Average volume from closed candles
                                 tf_volume = sum(float(c['v']) for c in closed_candles) / len(closed_candles)
-                                
-                                highs[tf] = tf_high
+                            
+                            highs[tf] = tf_high
                                 lows[tf] = tf_low
-                                volumes[tf] = tf_volume
+                            volumes[tf] = tf_volume
                                 
                                 logger.debug(f"{pair} {tf}: Previous candle H={tf_high:.2f} L={tf_low:.2f}")
-                            else:
+                        else:
                                 # No closed candles yet - use current price as fallback
                                 logger.warning(f"No closed candles for {pair} {tf}, using current price")
-                                highs[tf] = current_price
+                            highs[tf] = current_price
                                 lows[tf] = current_price
                                 volumes[tf] = 0
                         else:
@@ -709,8 +711,8 @@ class BotInstance:
                         # Format market metrics message with all timeframe data
                         message = f"📊 {pair} | ${current_price:.2f} | 1h: ${highs.get('1h', 0):.2f}/${lows.get('1h', 0):.2f} ({high_1h_distance:+.3f}%/{low_1h_distance:+.3f}%) | 30m: ${highs.get('30m', 0):.2f}/${lows.get('30m', 0):.2f} ({high_30m_distance:+.3f}%/{low_30m_distance:+.3f}%) | 15m: ${highs.get('15m', 0):.2f}/${lows.get('15m', 0):.2f} ({high_15m_distance:+.3f}%/{low_15m_distance:+.3f}%) | Vol: {volume_weight:.2f}x | Trend: {trend_direction}"
                         data = {
-                            'pair': pair,
-                            'current_price': current_price,
+                        'pair': pair,
+                        'current_price': current_price,
                             'highs_1h': highs.get('1h', 0),
                             'lows_1h': lows.get('1h', 0),
                             'highs_30m': highs.get('30m', 0),
@@ -723,7 +725,7 @@ class BotInstance:
                             'distance_to_low_30m': low_30m_distance,
                             'distance_to_high_15m': high_15m_distance,
                             'distance_to_low_15m': low_15m_distance,
-                            'volume_weight': volume_weight,
+                        'volume_weight': volume_weight,
                             'has_volume': has_volume,
                         'near_high_1h': False,  # Highs disabled - dip-buying only
                         'near_high_15m': False,  # Highs disabled - dip-buying only
@@ -855,7 +857,7 @@ class BotInstance:
                         success = await self.open_position(pair, 'long', current_price)
                         if success:
                             await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {})
-                        else:
+                else:
                             # open_position already logged the error, just log that trade signal failed
                             logger.warning(f"⚠️ Trade signal triggered but position open failed for {pair}")
                     except Exception as open_error:
@@ -949,22 +951,22 @@ class BotInstance:
                 # Log momentum (only every 30 seconds to avoid spam)
                 current_time = datetime.now().timestamp()
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
-                    await self.log(
-                        'market_data',
-                        f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
-                        {'pair': pair, 'momentum': momentum, 'price': current_price}
-                    )
+                await self.log(
+                    'market_data',
+                    f"📈 {pair} Momentum: {momentum:+.2f}% | Current: ${current_price:.2f}",
+                    {'pair': pair, 'momentum': momentum, 'price': current_price}
+                )
                     self.last_analysis_log_time = current_time
                 
                 # Entry signals
                 if momentum > 2.0:
                     success = await self.open_position(pair, 'long', current_price)
                     if success:
-                        await self.log('signal', f"🚀 LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
+                    await self.log('signal', f"🚀 LONG BREAKOUT: {pair} ({momentum:+.2f}%)", {})
                 elif momentum < -2.0:
                     success = await self.open_position(pair, 'short', current_price)
                     if success:
-                        await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
+                    await self.log('signal', f"📉 SHORT BREAKOUT: {pair} ({momentum:.2f}%)", {})
                     
             except Exception as e:
                 logger.error(f"Error analyzing momentum for {pair}: {e}")
@@ -1200,35 +1202,320 @@ class BotInstance:
         """Default strategy (for testing)"""
         await self.log('info', f"🤖 Running default strategy for {len(self.strategy['pairs'])} pairs", {})
     
-    async def open_position(self, pair: str, side: str, price: float) -> bool:
-        """Open a new position - returns True if successful, False otherwise"""
+    async def calculate_liquidity_flow(self, pair: str) -> Optional[dict]:
+        """Calculate liquidity flow from orderbook (bid/ask volume ratio)"""
         try:
-            position_size_usd = self.strategy['position_size']  # Position size in USD
+            orderbook = fetch_l2_orderbook(pair)
+            if not orderbook or 'levels' not in orderbook:
+                return None
+            
+            levels = orderbook['levels']
+            if not levels or len(levels) == 0:
+                return None
+            
+            # Separate bids and asks
+            # Orderbook format: [[price, size], ...]
+            # Typically bids are below mid, asks are above mid
+            # We'll use mid price to separate them
+            current_price = self.last_prices.get(pair)
+            if not current_price:
+                return None
+            
+            bid_volume = 0.0
+            ask_volume = 0.0
+            
+            for level in levels:
+                if len(level) < 2:
+                    continue
+                price = float(level[0])
+                size = float(level[1])
+                volume = price * size
+                
+                if price <= current_price:
+                    bid_volume += volume
+                else:
+                    ask_volume += volume
+            
+            total_volume = bid_volume + ask_volume
+            if total_volume == 0:
+                return None
+            
+            net_flow = bid_volume - ask_volume
+            flow_ratio = bid_volume / total_volume  # 0-1, >0.5 = bullish
+            
+            return {
+                'netFlow': net_flow,
+                'flowRatio': flow_ratio,
+                'bidVolume': bid_volume,
+                'askVolume': ask_volume,
+                'totalVolume': total_volume
+            }
+        except Exception as e:
+            logger.warning(f"Failed to calculate liquidity flow for {pair}: {e}")
+            return None
+    
+    async def get_scanner_levels(self, pair: str) -> Optional[dict]:
+        """Query scanner_levels from Supabase for a pair"""
+        try:
+            result = supabase.table('scanner_levels')\
+                .select('*')\
+                .eq('symbol', pair)\
+                .execute()
+            
+            if not result.data or len(result.data) == 0:
+                return None
+            
+            level_data = result.data[0]
+            
+            # Parse JSONB fields
+            support = level_data.get('support')
+            resistance = level_data.get('resistance')
+            all_levels_by_timeframe = level_data.get('all_levels_by_timeframe', {})
+            current_price = float(level_data.get('current_price', 0))
+            
+            # Extract all support levels from all_levels_by_timeframe
+            support_levels = []
+            if isinstance(all_levels_by_timeframe, dict):
+                for tf, tf_data in all_levels_by_timeframe.items():
+                    if isinstance(tf_data, dict):
+                        # Get support from this timeframe
+                        if 'support' in tf_data and tf_data['support']:
+                            support_levels.append({
+                                'price': float(tf_data['support'].get('price', 0)),
+                                'touches': int(tf_data['support'].get('touches', 1)),
+                                'weight': float(tf_data['support'].get('weight', 1)),
+                                'timeframe': tf
+                            })
+                        # Also check allLevels if available
+                        if 'allLevels' in tf_data and isinstance(tf_data['allLevels'], list):
+                            for level in tf_data['allLevels']:
+                                if isinstance(level, dict) and level.get('type') == 'support':
+                                    support_levels.append({
+                                        'price': float(level.get('price', 0)),
+                                        'touches': int(level.get('touches', 1)),
+                                        'weight': float(level.get('weight', 1)),
+                                        'timeframe': level.get('timeframe', tf)
+                                    })
+            
+            # Filter supports within 2% of current price and sort by touches then distance
+            if current_price > 0:
+                filtered_supports = []
+                for sup in support_levels:
+                    distance_pct = abs(sup['price'] - current_price) / current_price
+                    if distance_pct <= 0.02:  # Within 2%
+                        sup['distance_pct'] = distance_pct
+                        filtered_supports.append(sup)
+                
+                # Sort by touches (desc) then distance (asc)
+                filtered_supports.sort(key=lambda x: (-x['touches'], x['distance_pct']))
+                support_levels = filtered_supports
+            
+            return {
+                'current_price': current_price,
+                'support': support,
+                'resistance': resistance,
+                'all_support_levels': support_levels,
+                'all_levels_by_timeframe': all_levels_by_timeframe
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get scanner levels for {pair}: {e}")
+            return None
+    
+    async def calculate_position_size_multiplier(self, support_level: dict, current_price: float) -> float:
+        """Calculate position size multiplier based on support strength"""
+        base_multiplier = 1.0
+        touches = support_level.get('touches', 1)
+        weight = support_level.get('weight', 1.0)
+        distance_pct = support_level.get('distance_pct', 0)
+        
+        # Multiplier based on touches
+        if touches >= 5:
+            base_multiplier = 1.5
+        elif touches >= 3:
+            base_multiplier = 1.2
+        elif touches >= 2:
+            base_multiplier = 1.0
+        
+        # Cap at 1.5x
+        base_multiplier = min(base_multiplier, 1.5)
+        
+        # Distance penalty: reduce by 0.1x per 0.5% distance if >1%
+        if distance_pct > 0.01:
+            distance_penalty = ((distance_pct - 0.01) / 0.005) * 0.1
+            base_multiplier = max(0.5, base_multiplier - distance_penalty)
+        
+        # Weight check: minimum weight 2.0
+        if weight < 2.0:
+            base_multiplier *= 0.8  # Reduce if weight is low
+        
+        return base_multiplier
+    
+    async def run_support_liquidity_strategy(self):
+        """Support Liquidity Strategy - Buy at support levels when liquidity flow is positive"""
+        # Throttle: Check every 5 seconds to reduce API calls
+        current_time = datetime.now().timestamp()
+        if current_time - getattr(self, 'last_support_liquidity_check', 0) < 5:
+            return
+        self.last_support_liquidity_check = current_time
+        
+        logger.info(f"🎯 Running Support Liquidity Strategy | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
+        
+        # Check if max positions reached
+        max_positions_reached = len(self.positions) >= self.strategy['max_positions']
+        if max_positions_reached:
+            return
+        
+        # Get strategy parameters with defaults
+        params = self.strategy.get('parameters', {})
+        min_support_touches = params.get('min_support_touches', 2)
+        support_distance_threshold = params.get('support_distance_threshold', 0.002)  # 2%
+        liquidity_flow_threshold = params.get('liquidity_flow_threshold', 0.05)  # 5%
+        
+        for pair in self.strategy['pairs']:
+            # Skip if already have position
+            has_open_position = any(p['symbol'] == pair for p in self.positions)
+            if has_open_position:
+                continue
+            
+            try:
+                # Get current price
+                if pair not in self.last_prices:
+                    continue
+                current_price = self.last_prices[pair]
+                
+                # Get scanner levels from Supabase
+                levels_data = await self.get_scanner_levels(pair)
+                if not levels_data:
+                    continue
+                
+                # Get all support levels
+                support_levels = levels_data.get('all_support_levels', [])
+                if not support_levels:
+                    continue
+                
+                # Get liquidity flow from orderbook
+                liquidity_flow = await self.calculate_liquidity_flow(pair)
+                if not liquidity_flow:
+                    continue
+                
+                # Check liquidity flow is positive
+                net_flow = liquidity_flow.get('netFlow', 0)
+                flow_ratio = liquidity_flow.get('flowRatio', 0.5)
+                
+                if net_flow <= 0 or flow_ratio <= 0.55:
+                    continue  # Not positive flow
+                
+                # Check if flow meets threshold
+                net_flow_pct = net_flow / liquidity_flow.get('totalVolume', 1) if liquidity_flow.get('totalVolume', 0) > 0 else 0
+                if net_flow_pct < liquidity_flow_threshold:
+                    continue  # Flow not strong enough
+                
+                # Check volume (get average volume from candles)
+                try:
+                    end_time = int(datetime.now().timestamp() * 1000)
+                    start_time = end_time - (20 * 15 * 60 * 1000)  # Last 20 15m candles
+                    candles = await self.get_candles_cached(pair, '15m', start_time, end_time)
+                    
+                    if candles and len(candles) > 1:
+                        closed_candles = candles[:-1]
+                        avg_volume = sum(float(c.get('v', 0)) for c in closed_candles) / len(closed_candles) if len(closed_candles) > 0 else 0
+                        current_volume = float(candles[-1].get('v', 0)) if len(candles) > 0 else 0
+                        
+                        # Check if current volume is above average
+                        if avg_volume > 0 and current_volume < avg_volume * 0.8:
+                            continue  # Volume below average
+                    else:
+                        # Can't verify volume, skip
+                        continue
+                except Exception as e:
+                    logger.warning(f"Failed to check volume for {pair}: {e}")
+                    continue
+                
+                # Find best support level to trade
+                best_support = None
+                for support in support_levels:
+                    # Check if price is near support (within 0.1%)
+                    support_price = support['price']
+                    distance_pct = abs(current_price - support_price) / current_price if current_price > 0 else 1.0
+                    
+                    if distance_pct <= 0.001:  # Within 0.1%
+                        # Check touches requirement
+                        if support.get('touches', 0) >= min_support_touches:
+                            best_support = support
+                            break
+                
+                if not best_support:
+                    continue  # No suitable support found
+                
+                # Calculate position size multiplier
+                position_multiplier = await self.calculate_position_size_multiplier(best_support, current_price)
+                
+                # Log entry conditions
+                await self.log(
+                    'trade',
+                    f"✅ Support Liquidity Entry Signal: {pair} @ ${current_price:.2f} | Support: ${best_support['price']:.2f} ({best_support['touches']} touches, {best_support['timeframe']}) | Flow: {net_flow_pct*100:.1f}% | Size: {position_multiplier:.2f}x",
+                    {
+                        'pair': pair,
+                        'current_price': current_price,
+                        'support_price': best_support['price'],
+                        'support_touches': best_support['touches'],
+                        'support_timeframe': best_support['timeframe'],
+                        'net_flow': net_flow,
+                        'flow_ratio': flow_ratio,
+                        'position_multiplier': position_multiplier
+                    }
+                )
+                
+                # Open position with custom size
+                success = await self.open_position_with_size(
+                    pair,
+                    'long',
+                    current_price,
+                    position_multiplier,
+                    best_support,
+                    levels_data.get('resistance')
+                )
+                
+                if success:
+                    logger.info(f"✅ Opened Support Liquidity position: {pair} @ ${current_price:.2f}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error in support liquidity strategy for {pair}: {e}", exc_info=True)
+                continue
+    
+    async def open_position_with_size(self, pair: str, side: str, price: float, size_multiplier: float = 1.0, support_level: Optional[dict] = None, resistance_level: Optional[dict] = None) -> bool:
+        """Open a new position with custom size multiplier and support/resistance metadata"""
+        try:
+            position_size_usd = self.strategy['position_size'] * size_multiplier  # Position size in USD with multiplier
             stop_loss_pct = self.strategy['stop_loss_percent']
             take_profit_pct = self.strategy['take_profit_percent']
-            
-            # CRITICAL: Convert USD position size to units (size = USD / price)
-            # position_size is in dollars, but 'size' field should be in units
-            position_size_units = position_size_usd / price if price > 0 else 0
-            
-            logger.info(f"💰 Position size: ${position_size_usd:.2f} USD = {position_size_units:.6f} {pair} units @ ${price:.2f}")
             
             # Calculate SL/TP
             if side == 'long':
                 stop_loss = price * (1 - stop_loss_pct / 100)
-                take_profit = price * (1 + take_profit_pct / 100)
+                # Use resistance level for take profit if available
+                if resistance_level and isinstance(resistance_level, dict):
+                    resistance_price = float(resistance_level.get('price', 0))
+                    if resistance_price > price:
+                        take_profit = resistance_price
+                    else:
+                        take_profit = price * (1 + take_profit_pct / 100)
+                else:
+                    take_profit = price * (1 + take_profit_pct / 100)
             else:
                 stop_loss = price * (1 + stop_loss_pct / 100)
                 take_profit = price * (1 - take_profit_pct / 100)
             
             # Insert position
-            position_id = str(uuid.uuid4())  # Generate ID for position
+            position_id = str(uuid.uuid4())
+            position_size_units = position_size_usd / price if price > 0 else 0
+            
             position_data = {
                 'id': position_id,
                 'bot_id': self.bot_id,
                 'symbol': pair,
                 'side': side,
-                'size': position_size_units,  # Store as units, not USD!
+                'size': position_size_units,
                 'entry_price': price,
                 'current_price': price,
                 'stop_loss': stop_loss,
@@ -1237,158 +1524,99 @@ class BotInstance:
                 'status': 'open'
             }
             
-            logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f}")
-            try:
-                result = supabase.table('bot_positions').insert(position_data).execute()
-                
-                # Log result structure for debugging
-                logger.debug(f"Insert result: type={type(result)}, dir={[x for x in dir(result) if not x.startswith('_')]}")
-                if hasattr(result, 'data'):
-                    logger.debug(f"Result.data: {result.data}")
-                if hasattr(result, 'error'):
-                    logger.debug(f"Result.error: {result.error}")
-                
-            except Exception as e:
-                # Supabase Python client raises exceptions for errors
-                error_str = str(e)
-                error_type = type(e).__name__
-                logger.error(f"❌ Exception inserting position: {error_type}: {error_str}", exc_info=True)
-                
-                # Try to extract error message from exception - be careful with attribute access
-                error_msg = error_str  # Default to string representation
-                try:
-                    if hasattr(e, 'message') and e.message:
-                        error_msg = str(e.message)
-                    elif hasattr(e, 'args') and len(e.args) > 0:
-                        error_msg = str(e.args[0])
-                    elif hasattr(e, '__dict__'):
-                        # Check if error has a message in its dict
-                        if 'message' in e.__dict__:
-                            error_msg = str(e.__dict__['message'])
-                except Exception as extract_error:
-                    logger.error(f"❌ Error extracting error message: {extract_error}")
-                    error_msg = error_str
-                
-                try:
-                    await self.log('error', f"❌ Exception inserting position for {pair}: {error_msg}", {
-                        'error': error_msg,
-                        'error_type': error_type,
-                        'full_error': error_str
-                    })
-                except Exception as log_error:
-                    logger.error(f"❌ Failed to log error: {log_error}")
-                
-                return False
-            
-            # Check for Supabase errors in result object
-            if hasattr(result, 'error') and result.error:
-                # Handle different error formats
-                if isinstance(result.error, dict):
-                    error_msg = result.error.get('message', str(result.error))
-                elif isinstance(result.error, str):
-                    error_msg = result.error
-                else:
-                    error_msg = str(result.error)
-                logger.error(f"❌ Supabase error inserting position: {error_msg} | Full result: {result}")
-                await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg, 'full_result': str(result)})
-                return False
-            
-            # Check if result is actually an error dict
-            if isinstance(result, dict) and 'message' in result:
-                error_msg = result.get('message', 'Unknown error')
-                logger.error(f"❌ Supabase returned error dict: {error_msg} | Full result: {result}")
-                await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg, 'full_result': str(result)})
-                return False
-            
-            if not hasattr(result, 'data') or not result.data or len(result.data) == 0:
-                error_msg = f"No data returned from insert. Result type: {type(result)}, Result: {result}"
-                logger.error(f"❌ Position insert returned no data for {pair}: {error_msg}")
-                await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {'result': str(result), 'result_type': str(type(result))})
-                return False
-            
-            # Verify the insert succeeded (we already have position_id from generation)
-            logger.info(f"✅ Position inserted: {position_id}")
-            
-            # Insert trade
-            trade_id = str(uuid.uuid4())  # Generate ID for trade
-            trade_data = {
-                'id': trade_id,
-                'bot_id': self.bot_id,
-                'position_id': position_id,
-                'symbol': pair,
-                'side': 'buy' if side == 'long' else 'sell',
-                'size': position_size_units,  # Use units, not USD
-                'price': price,
-                'executed_at': datetime.now().isoformat(),
-                'mode': self.mode
-            }
-            
-            logger.info(f"📝 Inserting trade for {pair} {side} @ ${price:.2f}")
-            try:
-                trade_result = supabase.table('bot_trades').insert(trade_data).execute()
-            except Exception as e:
-                logger.error(f"❌ Exception inserting trade: {e}", exc_info=True)
-                await self.log('error', f"❌ Exception inserting trade for {pair}: {str(e)}", {'error': str(e)})
-                return False
-            
-            # Check for Supabase errors
-            if hasattr(trade_result, 'error') and trade_result.error:
-                error_msg = str(trade_result.error) if trade_result.error else "Unknown error"
-                logger.error(f"❌ Supabase error inserting trade: {error_msg}")
-                await self.log('error', f"❌ Failed to insert trade for {pair}: {error_msg}", {'error': error_msg})
-                return False
-            
-            if not hasattr(trade_result, 'data') or not trade_result.data or len(trade_result.data) == 0:
-                error_msg = f"No data returned from trade insert. Result type: {type(trade_result)}, Result: {trade_result}"
-                logger.error(f"❌ Trade insert returned no data for {pair}: {error_msg}")
-                await self.log('error', f"❌ Failed to insert trade for {pair} - No data returned", {'result': str(trade_result)})
-                return False
-            
-            logger.info(f"✅ Trade inserted successfully")
-            
-            # CRITICAL: Update self.positions immediately so next tick doesn't open duplicate
-            self.positions.append({
-                'id': position_id,
-                'symbol': pair,
-                'side': side,
-                'size': position_size_units,
-                'entry_price': price,
-                'current_price': price,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'status': 'open'
-            })
-            logger.info(f"✅ Updated positions list: {len(self.positions)} positions")
-            
-            # Initialize position metadata for risk management
+            # Store support/resistance metadata
             self.position_metadata[position_id] = {
                 'highest_profit_pct': 0.0,
                 'highest_profit_price': price,
                 'first_profit_time': None,
-                'original_stop_loss': stop_loss
+                'original_stop_loss': stop_loss,
+                'strategy_type': 'support_liquidity',
+                'support_level': support_level,
+                'resistance_level': resistance_level,
+                'partial_exit_done': False,
+                'trailing_stop_activated': False,
+                'trailing_stop_price': None
             }
-            logger.debug(f"📊 Initialized metadata for position {position_id}")
             
-            # Delete monitoring log since we now have a position
-            if pair in self.monitoring_log_ids:
-                try:
-                    supabase.table('bot_logs').delete().eq('id', self.monitoring_log_ids[pair]).execute()
-                    del self.monitoring_log_ids[pair]
-                except Exception as e:
-                    logger.warning(f"Failed to delete monitoring log for {pair}: {e}")
-            
-            await self.log(
-                'trade',
-                f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
-                {'position_id': position_id, 'side': side, 'price': price}
-            )
-            
-            return True
-            
+            logger.info(f"📝 Inserting position for {pair} {side} @ ${price:.2f} (size: {size_multiplier:.2f}x)")
+            try:
+                result = supabase.table('bot_positions').insert(position_data).execute()
+                
+                if hasattr(result, 'error') and result.error:
+                    error_msg = str(result.error) if result.error else "Unknown error"
+                    logger.error(f"❌ Supabase error inserting position: {error_msg}")
+                    await self.log('error', f"❌ Failed to insert position for {pair}: {error_msg}", {'error': error_msg})
+                    return False
+                
+                if not hasattr(result, 'data') or not result.data or len(result.data) == 0:
+                    error_msg = f"No data returned from insert. Result type: {type(result)}"
+                    logger.error(f"❌ Position insert returned no data for {pair}: {error_msg}")
+                    await self.log('error', f"❌ Failed to insert position for {pair} - No data returned", {'result': str(result)})
+                    return False
+                
+                logger.info(f"✅ Position inserted: {position_id}")
+                
+                # Insert trade
+                trade_id = str(uuid.uuid4())
+                trade_data = {
+                    'id': trade_id,
+                    'bot_id': self.bot_id,
+                    'position_id': position_id,
+                    'symbol': pair,
+                    'side': 'buy' if side == 'long' else 'sell',
+                    'size': position_size_units,
+                    'price': price,
+                    'executed_at': datetime.now().isoformat(),
+                    'mode': self.mode
+                }
+                
+                trade_result = supabase.table('bot_trades').insert(trade_data).execute()
+                
+                if hasattr(trade_result, 'error') and trade_result.error:
+                    error_msg = str(trade_result.error) if trade_result.error else "Unknown error"
+                    logger.error(f"❌ Supabase error inserting trade: {error_msg}")
+                    return False
+                
+                # Update positions list
+                self.positions.append({
+                    'id': position_id,
+                    'symbol': pair,
+                    'side': side,
+                    'size': position_size_units,
+                    'entry_price': price,
+                    'current_price': price,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'status': 'open'
+                })
+                
+                await self.log(
+                    'trade',
+                    f"✅ Opened {side.upper()} {pair} @ ${price:.2f} | Size: {size_multiplier:.2f}x | SL: ${stop_loss:.2f} | TP: ${take_profit:.2f}",
+                    {
+                        'position_id': position_id,
+                        'side': side,
+                        'price': price,
+                        'size_multiplier': size_multiplier,
+                        'support_level': support_level,
+                        'resistance_level': resistance_level
+                    }
+                )
+                
+                return True
+                
+            except Exception as e:
+                logger.error(f"❌ Exception inserting position: {e}", exc_info=True)
+                await self.log('error', f"❌ Failed to open position for {pair}: {str(e)}", {'error': str(e)})
+                return False
+                
         except Exception as e:
-            logger.error(f"❌ CRITICAL ERROR opening position for {pair}: {e}", exc_info=True)
-            await self.log('error', f"❌ Failed to open position for {pair}: {str(e)}", {'error': str(e)})
+            logger.error(f"❌ Error opening position: {e}", exc_info=True)
             return False
+    
+    async def open_position(self, pair: str, side: str, price: float) -> bool:
+        """Open a new position - returns True if successful, False otherwise"""
+        return await self.open_position_with_size(pair, side, price, 1.0)
     
     async def check_positions(self):
         """Check and manage open positions"""
@@ -1484,6 +1712,7 @@ class BotInstance:
                 }
             
             metadata = self.position_metadata[position_id]
+            strategy_type = metadata.get('strategy_type', 'default')
             
             # Update highest profit tracking
             if pnl_pct > metadata['highest_profit_pct']:
@@ -1505,36 +1734,133 @@ class BotInstance:
             stop_loss = position.get('stop_loss')
             take_profit = position.get('take_profit')
             
-            # Apply risk management: Break-even protection only
-            # Move SL to entry_price when profit >= 0.15% to protect against losses
-            if side == 'long' and pnl_pct >= 0.15 and stop_loss and stop_loss < entry_price:
-                new_sl = entry_price
-                if abs(new_sl - stop_loss) > 0.0001:  # Only update if significantly different
-                    try:
-                        supabase.table('bot_positions')\
-                            .update({'stop_loss': new_sl})\
-                            .eq('id', position_id)\
-                            .execute()
-                        position['stop_loss'] = new_sl  # Update local copy
-                        stop_loss = new_sl
-                        logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
-            elif side == 'short' and pnl_pct >= 0.15 and stop_loss and stop_loss > entry_price:
-                new_sl = entry_price
-                if abs(new_sl - stop_loss) > 0.0001:
-                    try:
-                        supabase.table('bot_positions')\
-                            .update({'stop_loss': new_sl})\
-                            .eq('id', position_id)\
-                            .execute()
-                        position['stop_loss'] = new_sl
-                        stop_loss = new_sl
-                        logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
+            # Support Liquidity Strategy: Special exit logic
+            if strategy_type == 'support_liquidity' and side == 'long':
+                # Get strategy parameters
+                params = self.strategy.get('parameters', {})
+                partial_exit_percent = params.get('partial_exit_percent', 0.5)  # 50%
+                trailing_stop_activation = params.get('trailing_stop_activation', 0.002)  # 0.2%
+                trailing_stop_buffer = params.get('trailing_stop_buffer', 0.001)  # 0.1%
+                
+                # Check for partial exit at resistance
+                resistance_level = metadata.get('resistance_level')
+                if resistance_level and isinstance(resistance_level, dict) and not metadata.get('partial_exit_done', False):
+                    resistance_price = float(resistance_level.get('price', 0))
+                    if resistance_price > entry_price and current_price >= resistance_price:
+                        # Partial exit: close 50% of position
+                        partial_size = position['size'] * partial_exit_percent
+                        partial_pnl = (current_price - entry_price) * partial_size
+                        partial_pnl_pct = (partial_pnl / (entry_price * partial_size)) * 100
+                        
+                        logger.info(f"📊 PARTIAL EXIT: {pair} @ ${current_price:.2f} (Resistance: ${resistance_price:.2f}) | Closing {partial_exit_percent*100:.0f}% | P&L: ${partial_pnl:.2f} ({partial_pnl_pct:+.2f}%)")
+                        
+                        # Update position size in database
+                        new_size = position['size'] * (1 - partial_exit_percent)
+                        try:
+                            supabase.table('bot_positions')\
+                                .update({'size': new_size})\
+                                .eq('id', position_id)\
+                                .execute()
+                            position['size'] = new_size
+                            
+                            # Insert partial exit trade
+                            trade_id = str(uuid.uuid4())
+                            supabase.table('bot_trades').insert({
+                                'id': trade_id,
+                                'bot_id': self.bot_id,
+                                'position_id': position_id,
+                                'symbol': pair,
+                                'side': 'sell',
+                                'size': partial_size,
+                                'price': current_price,
+                                'pnl': partial_pnl,
+                                'executed_at': datetime.now().isoformat(),
+                                'mode': self.mode
+                            }).execute()
+                            
+                            metadata['partial_exit_done'] = True
+                            await self.log(
+                                'trade',
+                                f"📊 Partial Exit: {pair} @ ${current_price:.2f} (Resistance) | Closed {partial_exit_percent*100:.0f}% | P&L: ${partial_pnl:.2f} ({partial_pnl_pct:+.2f}%)",
+                                {
+                                    'position_id': position_id,
+                                    'exit_type': 'partial_resistance',
+                                    'partial_pnl': partial_pnl,
+                                    'remaining_size': new_size
+                                }
+                            )
+                        except Exception as e:
+                            logger.error(f"❌ Failed to execute partial exit for {pair}: {e}")
+                
+                # Trailing stop logic
+                if pnl_pct >= trailing_stop_activation * 100:  # 0.2% profit
+                    if not metadata.get('trailing_stop_activated', False):
+                        # Activate trailing stop
+                        metadata['trailing_stop_activated'] = True
+                        new_trailing_sl = entry_price * (1 + trailing_stop_buffer)  # Break-even + 0.1%
+                        metadata['trailing_stop_price'] = new_trailing_sl
+                        
+                        if stop_loss < new_trailing_sl:
+                            try:
+                                supabase.table('bot_positions')\
+                                    .update({'stop_loss': new_trailing_sl})\
+                                    .eq('id', position_id)\
+                                    .execute()
+                                position['stop_loss'] = new_trailing_sl
+                                stop_loss = new_trailing_sl
+                                logger.info(f"🎯 {pair} Trailing stop activated: SL moved to ${new_trailing_sl:.2f} (BE + {trailing_stop_buffer*100:.1f}%)")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to activate trailing stop for {pair}: {e}")
+                    else:
+                        # Update trailing stop as price moves up
+                        trailing_sl = metadata.get('trailing_stop_price', entry_price)
+                        new_trailing_sl = max(trailing_sl, current_price * (1 - trailing_stop_buffer))  # Keep 0.1% below current price
+                        
+                        if new_trailing_sl > trailing_sl:
+                            metadata['trailing_stop_price'] = new_trailing_sl
+                            if stop_loss < new_trailing_sl:
+                                try:
+                                    supabase.table('bot_positions')\
+                                        .update({'stop_loss': new_trailing_sl})\
+                                        .eq('id', position_id)\
+                                        .execute()
+                                    position['stop_loss'] = new_trailing_sl
+                                    stop_loss = new_trailing_sl
+                                    logger.debug(f"📈 {pair} Trailing stop updated: ${new_trailing_sl:.2f}")
+                                except Exception as e:
+                                    logger.error(f"❌ Failed to update trailing stop for {pair}: {e}")
             
-            # Standard TP/SL Checks (original logic - let winners run to TP)
+            # Standard break-even protection for other strategies
+            elif strategy_type != 'support_liquidity':
+                # Move SL to entry_price when profit >= 0.15% to protect against losses
+                if side == 'long' and pnl_pct >= 0.15 and stop_loss and stop_loss < entry_price:
+                    new_sl = entry_price
+                    if abs(new_sl - stop_loss) > 0.0001:  # Only update if significantly different
+                        try:
+                            supabase.table('bot_positions')\
+                                .update({'stop_loss': new_sl})\
+                                .eq('id', position_id)\
+                                .execute()
+                            position['stop_loss'] = new_sl  # Update local copy
+                            stop_loss = new_sl
+                            logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
+                elif side == 'short' and pnl_pct >= 0.15 and stop_loss and stop_loss > entry_price:
+                    new_sl = entry_price
+                    if abs(new_sl - stop_loss) > 0.0001:
+                        try:
+                            supabase.table('bot_positions')\
+                                .update({'stop_loss': new_sl})\
+                                .eq('id', position_id)\
+                                .execute()
+                            position['stop_loss'] = new_sl
+                            stop_loss = new_sl
+                            logger.info(f"🛡️ {pair} Break-even protection: Moved SL to entry ${entry_price:.2f}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to update break-even SL for {pair}: {e}")
+            
+            # Standard TP/SL Checks
             should_close = False
             reason = ''
             
@@ -1545,7 +1871,7 @@ class BotInstance:
                 
                 if stop_loss and current_price <= stop_loss:
                     should_close = True
-                    reason = 'Stop Loss'
+                    reason = 'Stop Loss' if strategy_type != 'support_liquidity' or not metadata.get('trailing_stop_activated') else 'Trailing Stop'
                 elif take_profit and current_price >= take_profit:
                     should_close = True
                     reason = 'Take Profit'
@@ -1574,7 +1900,7 @@ class BotInstance:
             side = position['side']
             pnl = (close_price - position['entry_price']) * position['size'] if side == 'long' else (position['entry_price'] - close_price) * position['size']
             pnl_pct = (pnl / (position['entry_price'] * position['size'])) * 100
-            
+        
             logger.info(f"📝 Closing position {position['id']} for {position['symbol']} @ ${close_price:.2f} ({reason})")
             
             # Update position in database
@@ -1592,7 +1918,7 @@ class BotInstance:
             except Exception as e:
                 logger.error(f"❌ Failed to update position: {e}", exc_info=True)
                 return
-            
+        
             # Insert closing trade
             trade_id = str(uuid.uuid4())
             try:
@@ -1649,7 +1975,7 @@ class BotInstance:
             # Record close time for cooldown period
             self.last_position_close_time[pair] = datetime.now().timestamp()
             logger.info(f"⏸️ {pair} cooldown started - will wait {self.position_cooldown}s before next trade")
-            
+        
             await self.log(
                 'trade',
                 f"🔴 Closed {side.upper()} {position['symbol']} @ ${close_price:.2f} ({reason}) | Entry: ${position['entry_price']:.2f} | P&L: ${pnl:.2f} ({pnl_pct:+.2f}%)",

@@ -1289,38 +1289,52 @@ class BotInstance:
                     except Exception as e:
                         logger.warning(f"❌ Error parsing scanner levels data for {pair}: {e}")
                 
-                # 2. CALCULATE LIQUIDITY FLOW FROM ORDERBOOK
+                # 2. CALCULATE NET FLOW FROM RECENT TRADES (like scanner does)
                 liquidity_flow = None
                 net_flow = 0
-                bid_depth = 0
-                ask_depth = 0
+                buy_volume = 0
+                sell_volume = 0
                 flow_ratio = 0.5
                 
                 try:
-                    l2_data = fetch_l2_orderbook(pair)
-                    if l2_data and 'levels' in l2_data:
-                        bids = l2_data['levels'][0]  # [[price, size], ...]
-                        asks = l2_data['levels'][1]
-                        
-                        if bids and asks:
-                            # Calculate depth (volume) at each level
-                            bid_depth = sum(float(level[1]) * float(level[0]) for level in bids[:10])  # Volume in USD
-                            ask_depth = sum(float(level[1]) * float(level[0]) for level in asks[:10])  # Volume in USD
-                            
-                            total_depth = bid_depth + ask_depth
-                            if total_depth > 0:
-                                net_flow = bid_depth - ask_depth  # Positive = buying pressure
-                                flow_ratio = bid_depth / total_depth  # >0.5 = bullish
+                    # Fetch recent trades (last 100 trades)
+                    recent_trades = info.recent_trades({'coin': pair})
+                    
+                    if recent_trades and isinstance(recent_trades, list) and len(recent_trades) > 0:
+                        # Calculate net flow from trades
+                        # 'B' = bid (buy), 'A' = ask (sell)
+                        for trade in recent_trades[:100]:  # Use last 100 trades
+                            try:
+                                price = float(trade.get('px', 0)) if isinstance(trade, dict) else float(getattr(trade, 'px', 0))
+                                size = float(trade.get('sz', 0)) if isinstance(trade, dict) else float(getattr(trade, 'sz', 0))
+                                side = trade.get('side', 'B') if isinstance(trade, dict) else getattr(trade, 'side', 'B')
                                 
-                                liquidity_flow = {
-                                    'net_flow': net_flow,
-                                    'bid_depth': bid_depth,
-                                    'ask_depth': ask_depth,
-                                    'flow_ratio': flow_ratio,
-                                    'is_bullish': net_flow > 0 and flow_ratio > 0.5
-                                }
+                                volume = price * size
+                                
+                                if side == 'B':  # Bid = buy
+                                    buy_volume += volume
+                                elif side == 'A':  # Ask = sell
+                                    sell_volume += volume
+                            except Exception as trade_error:
+                                logger.debug(f"Error processing trade for {pair}: {trade_error}")
+                                continue
+                        
+                        total_volume = buy_volume + sell_volume
+                        if total_volume > 0:
+                            net_flow = buy_volume - sell_volume  # Positive = buying pressure
+                            flow_ratio = buy_volume / total_volume  # >0.5 = bullish
+                            
+                            liquidity_flow = {
+                                'net_flow': net_flow,
+                                'buy_volume': buy_volume,
+                                'sell_volume': sell_volume,
+                                'flow_ratio': flow_ratio,
+                                'is_bullish': net_flow > 0  # Positive net flow = bullish
+                            }
+                    else:
+                        logger.debug(f"⚠️ No recent trades data for {pair}")
                 except Exception as e:
-                    logger.warning(f"❌ Failed to calculate liquidity flow for {pair}: {e}")
+                    logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}")
                 
                 # 3. LOG MARKET DATA (every 30 seconds)
                 if current_time - self.last_analysis_log_time >= self.market_log_interval:
@@ -1348,7 +1362,9 @@ class BotInstance:
                     # Add liquidity flow info
                     if liquidity_flow:
                         flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
-                        log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000_000:.2f}M net (Bid: ${bid_depth/1_000_000:.2f}M, Ask: ${ask_depth/1_000_000:.2f}M, Ratio: {flow_ratio*100:.1f}%)")
+                        buy_vol = liquidity_flow.get('buy_volume', 0)
+                        sell_vol = liquidity_flow.get('sell_volume', 0)
+                        log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000:.2f}K net (Buy: ${buy_vol/1_000:.2f}K, Sell: ${sell_vol/1_000:.2f}K, Ratio: {flow_ratio*100:.1f}%)")
                     else:
                         log_parts.append("Flow: N/A")
                     
@@ -1381,15 +1397,15 @@ class BotInstance:
                         # Price is at/near support AND liquidity flow is bullish
                         # Additional checks:
                         # - Support should be below current price (we're buying dips)
-                        # - Net flow should be significantly positive
-                        # - Flow ratio should be > 0.55 (55%+ buying pressure)
+                        # - Net flow should be positive (buying pressure)
+                        # - Flow ratio should be > 0.5 (more buying than selling)
                         
                         is_price_above_support = current_price >= support_price * 0.995  # Within 0.5% above support
-                        is_strong_buy_pressure = net_flow > 100_000 and flow_ratio > 0.55  # $100k+ net flow, 55%+ bid ratio
+                        is_positive_flow = net_flow > 0  # Positive net flow = buying pressure
                         
-                        if is_price_above_support and is_strong_buy_pressure:
+                        if is_price_above_support and is_positive_flow:
                             # TRADE SIGNAL: Open LONG position
-                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with bullish flow (${net_flow/1_000_000:.2f}M net, {flow_ratio*100:.1f}% bid)"
+                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with bullish flow (${net_flow/1_000:.2f}K net, {flow_ratio*100:.1f}% buy)"
                             logger.info(f"✅ {pair} SUPPORT LIQUIDITY SIGNAL: {reason}")
                             
                             try:
@@ -1408,7 +1424,7 @@ class BotInstance:
                                 logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                 await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                         else:
-                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support}, strong_pressure={is_strong_buy_pressure} (net_flow=${net_flow/1_000_000:.2f}M, ratio={flow_ratio*100:.1f}%)")
+                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support}, positive_flow={is_positive_flow} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
                     else:
                         logger.debug(f"📊 {pair} Support at ${support_price:.2f} but price too far: {support_distance_pct:.2f}% away (threshold: {support_touch_threshold}%)")
                 elif support_level and not liquidity_flow:
@@ -1416,7 +1432,7 @@ class BotInstance:
                 elif not support_level:
                     logger.debug(f"📊 {pair} No support level data from scanner")
                 elif support_level and liquidity_flow and not liquidity_flow['is_bullish']:
-                    logger.debug(f"📊 {pair} At support but flow is bearish (net_flow=${net_flow/1_000_000:.2f}M, ratio={flow_ratio*100:.1f}%)")
+                    logger.debug(f"📊 {pair} At support but flow is bearish (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
                 
             except Exception as e:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)

@@ -285,6 +285,8 @@ class BotInstance:
             await self.run_multi_timeframe_breakout_strategy()
         elif self.strategy['type'] == 'liquidity_grab':
             await self.run_liquidity_grab_strategy()
+        elif self.strategy['type'] == 'support_liquidity':
+            await self.run_support_liquidity_strategy()
         else:
             await self.run_default_strategy()
         
@@ -1195,6 +1197,230 @@ class BotInstance:
             except Exception as e:
                 logger.error(f"❌ Error in liquidity grab analysis for {pair}: {e}", exc_info=True)
                 await self.log('error', f"❌ Error analyzing liquidity grab for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
+    
+    async def run_support_liquidity_strategy(self):
+        """Support Liquidity Strategy - Buy at support levels when liquidity flow is positive"""
+        # Throttle: Check every 5 seconds to reduce API calls
+        current_time = datetime.now().timestamp()
+        if not hasattr(self, 'last_support_liquidity_check'):
+            self.last_support_liquidity_check = 0
+        
+        if current_time - self.last_support_liquidity_check < 5:
+            return  # Skip this tick, wait for next interval
+        
+        self.last_support_liquidity_check = current_time
+        
+        logger.info(f"🎯 Running Support Liquidity Strategy | Positions: {len(self.positions)}/{self.strategy['max_positions']} | Pairs: {self.strategy['pairs']}")
+        
+        # Check if max positions reached
+        max_positions_reached = len(self.positions) >= self.strategy['max_positions']
+        if max_positions_reached:
+            return
+        
+        for pair in self.strategy['pairs']:
+            # Skip if already have position
+            has_open_position = any(p['symbol'] == pair for p in self.positions)
+            if has_open_position:
+                continue
+            
+            try:
+                # Get current price
+                if pair not in self.last_prices:
+                    continue
+                current_price = self.last_prices[pair]
+                
+                # 1. FETCH LEVELS FROM SCANNER_LEVELS TABLE
+                scanner_levels_data = None
+                try:
+                    result = supabase.table('scanner_levels')\
+                        .select('*')\
+                        .eq('symbol', pair)\
+                        .execute()
+                    
+                    if result.data and len(result.data) > 0:
+                        scanner_levels_data = result.data[0]
+                        logger.debug(f"✅ Fetched scanner levels for {pair} from Supabase")
+                    else:
+                        logger.debug(f"⚠️ No scanner levels data found for {pair} in Supabase")
+                except Exception as e:
+                    logger.warning(f"❌ Failed to fetch scanner levels for {pair}: {e}")
+                    scanner_levels_data = None
+                
+                # Parse levels data
+                support_level = None
+                resistance_level = None
+                closest_level = None
+                all_levels_by_timeframe = {}
+                
+                if scanner_levels_data:
+                    try:
+                        if scanner_levels_data.get('support'):
+                            support_data = scanner_levels_data['support']
+                            if isinstance(support_data, dict):
+                                support_level = {
+                                    'price': float(support_data.get('price', 0)),
+                                    'timeframe': support_data.get('timeframe', 'unknown'),
+                                    'touches': support_data.get('touches', 1),
+                                    'weight': support_data.get('weight', 1)
+                                }
+                        
+                        if scanner_levels_data.get('resistance'):
+                            resistance_data = scanner_levels_data['resistance']
+                            if isinstance(resistance_data, dict):
+                                resistance_level = {
+                                    'price': float(resistance_data.get('price', 0)),
+                                    'timeframe': resistance_data.get('timeframe', 'unknown'),
+                                    'touches': resistance_data.get('touches', 1),
+                                    'weight': resistance_data.get('weight', 1)
+                                }
+                        
+                        if scanner_levels_data.get('closest_level'):
+                            closest_data = scanner_levels_data['closest_level']
+                            if isinstance(closest_data, dict):
+                                closest_level = {
+                                    'price': float(closest_data.get('price', 0)),
+                                    'timeframe': closest_data.get('timeframe', 'unknown'),
+                                    'type': closest_data.get('type', 'unknown'),
+                                    'distance': float(closest_data.get('distance', 999))
+                                }
+                        
+                        if scanner_levels_data.get('all_levels_by_timeframe'):
+                            all_levels_by_timeframe = scanner_levels_data['all_levels_by_timeframe']
+                    except Exception as e:
+                        logger.warning(f"❌ Error parsing scanner levels data for {pair}: {e}")
+                
+                # 2. CALCULATE LIQUIDITY FLOW FROM ORDERBOOK
+                liquidity_flow = None
+                net_flow = 0
+                bid_depth = 0
+                ask_depth = 0
+                flow_ratio = 0.5
+                
+                try:
+                    l2_data = fetch_l2_orderbook(pair)
+                    if l2_data and 'levels' in l2_data:
+                        bids = l2_data['levels'][0]  # [[price, size], ...]
+                        asks = l2_data['levels'][1]
+                        
+                        if bids and asks:
+                            # Calculate depth (volume) at each level
+                            bid_depth = sum(float(level[1]) * float(level[0]) for level in bids[:10])  # Volume in USD
+                            ask_depth = sum(float(level[1]) * float(level[0]) for level in asks[:10])  # Volume in USD
+                            
+                            total_depth = bid_depth + ask_depth
+                            if total_depth > 0:
+                                net_flow = bid_depth - ask_depth  # Positive = buying pressure
+                                flow_ratio = bid_depth / total_depth  # >0.5 = bullish
+                                
+                                liquidity_flow = {
+                                    'net_flow': net_flow,
+                                    'bid_depth': bid_depth,
+                                    'ask_depth': ask_depth,
+                                    'flow_ratio': flow_ratio,
+                                    'is_bullish': net_flow > 0 and flow_ratio > 0.5
+                                }
+                except Exception as e:
+                    logger.warning(f"❌ Failed to calculate liquidity flow for {pair}: {e}")
+                
+                # 3. LOG MARKET DATA (every 30 seconds)
+                if current_time - self.last_analysis_log_time >= self.market_log_interval:
+                    # Build log message with all data
+                    log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
+                    
+                    # Add support level info
+                    if support_level:
+                        support_dist = ((current_price - support_level['price']) / support_level['price']) * 100
+                        log_parts.append(f"Support: ${support_level['price']:.2f} ({support_dist:+.2f}%) [{support_level['timeframe']}, {support_level['touches']} touches]")
+                    else:
+                        log_parts.append("Support: N/A")
+                    
+                    # Add resistance level info
+                    if resistance_level:
+                        resistance_dist = ((resistance_level['price'] - current_price) / current_price) * 100
+                        log_parts.append(f"Resistance: ${resistance_level['price']:.2f} ({resistance_dist:+.2f}%) [{resistance_level['timeframe']}, {resistance_level['touches']} touches]")
+                    else:
+                        log_parts.append("Resistance: N/A")
+                    
+                    # Add closest level info
+                    if closest_level:
+                        log_parts.append(f"Closest: ${closest_level['price']:.2f} ({closest_level['type']}, {closest_level['distance']:.2f}% away)")
+                    
+                    # Add liquidity flow info
+                    if liquidity_flow:
+                        flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
+                        log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000_000:.2f}M net (Bid: ${bid_depth/1_000_000:.2f}M, Ask: ${ask_depth/1_000_000:.2f}M, Ratio: {flow_ratio*100:.1f}%)")
+                    else:
+                        log_parts.append("Flow: N/A")
+                    
+                    log_message = " | ".join(log_parts)
+                    
+                    await self.log(
+                        'market_data',
+                        log_message,
+                        {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'support_level': support_level,
+                            'resistance_level': resistance_level,
+                            'closest_level': closest_level,
+                            'liquidity_flow': liquidity_flow,
+                            'all_levels_by_timeframe': all_levels_by_timeframe
+                        }
+                    )
+                    self.last_analysis_log_time = current_time
+                
+                # 4. CHECK ENTRY CONDITIONS
+                # Entry: Price touches support AND liquidity flow is positive
+                if support_level and liquidity_flow and liquidity_flow['is_bullish']:
+                    support_price = support_level['price']
+                    # Check if price is near support (within 0.5%)
+                    support_distance_pct = abs(current_price - support_price) / support_price * 100
+                    support_touch_threshold = 0.5  # 0.5% wiggle room
+                    
+                    if support_distance_pct <= support_touch_threshold:
+                        # Price is at/near support AND liquidity flow is bullish
+                        # Additional checks:
+                        # - Support should be below current price (we're buying dips)
+                        # - Net flow should be significantly positive
+                        # - Flow ratio should be > 0.55 (55%+ buying pressure)
+                        
+                        is_price_above_support = current_price >= support_price * 0.995  # Within 0.5% above support
+                        is_strong_buy_pressure = net_flow > 100_000 and flow_ratio > 0.55  # $100k+ net flow, 55%+ bid ratio
+                        
+                        if is_price_above_support and is_strong_buy_pressure:
+                            # TRADE SIGNAL: Open LONG position
+                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with bullish flow (${net_flow/1_000_000:.2f}M net, {flow_ratio*100:.1f}% bid)"
+                            logger.info(f"✅ {pair} SUPPORT LIQUIDITY SIGNAL: {reason}")
+                            
+                            try:
+                                success = await self.open_position(pair, 'long', current_price)
+                                if success:
+                                    await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {
+                                        'support_price': support_price,
+                                        'support_timeframe': support_level['timeframe'],
+                                        'support_touches': support_level['touches'],
+                                        'net_flow': net_flow,
+                                        'flow_ratio': flow_ratio
+                                    })
+                                else:
+                                    logger.warning(f"⚠️ Support liquidity signal triggered but position open failed for {pair}")
+                            except Exception as open_error:
+                                logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
+                                await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
+                        else:
+                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support}, strong_pressure={is_strong_buy_pressure} (net_flow=${net_flow/1_000_000:.2f}M, ratio={flow_ratio*100:.1f}%)")
+                    else:
+                        logger.debug(f"📊 {pair} Support at ${support_price:.2f} but price too far: {support_distance_pct:.2f}% away (threshold: {support_touch_threshold}%)")
+                elif support_level and not liquidity_flow:
+                    logger.debug(f"📊 {pair} Has support level but no liquidity flow data available")
+                elif not support_level:
+                    logger.debug(f"📊 {pair} No support level data from scanner")
+                elif support_level and liquidity_flow and not liquidity_flow['is_bullish']:
+                    logger.debug(f"📊 {pair} At support but flow is bearish (net_flow=${net_flow/1_000_000:.2f}M, ratio={flow_ratio*100:.1f}%)")
+                
+            except Exception as e:
+                logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)
+                await self.log('error', f"❌ Error analyzing support liquidity for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
     
     async def run_default_strategy(self):
         """Default strategy (for testing)"""

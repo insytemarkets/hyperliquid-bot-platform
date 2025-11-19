@@ -243,20 +243,20 @@ class BotInstance:
             logger.debug(f"Using cached market data (age: {current_time - self.last_market_data_fetch:.1f}s)")
         else:
             # Fetch fresh data
-        try:
-            all_mids = info.all_mids()
+            try:
+                all_mids = info.all_mids()
                 self.cached_market_data = all_mids
                 self.last_market_data_fetch = current_time
                 logger.debug(f"Fetched fresh market data")
-        except Exception as e:
-            logger.error(f"Failed to fetch Hyperliquid prices: {e}")
+            except Exception as e:
+                logger.error(f"Failed to fetch Hyperliquid prices: {e}")
                 # Use cached data if available, even if expired
                 if self.cached_market_data:
                     logger.warning(f"Using stale cache due to API error: {e}")
                     all_mids = self.cached_market_data
                 else:
-            await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
-            return
+                    await self.log('error', f"❌ Failed to fetch market data: {str(e)}", {})
+                    return
         
         # Update last prices
         for pair in self.strategy['pairs']:

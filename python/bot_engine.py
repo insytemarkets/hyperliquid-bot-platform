@@ -1421,7 +1421,7 @@ class BotInstance:
                             'all_levels_by_timeframe': all_levels_by_timeframe
                         }
                     )
-                    self.last_analysis_log_time = current_time
+                    self.last_market_metrics_update_time[pair] = current_time
                 
                 # 4. CHECK ENTRY CONDITIONS
                 # Entry: Price touches support AND liquidity flow is positive

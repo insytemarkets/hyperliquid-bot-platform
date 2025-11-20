@@ -1222,12 +1222,21 @@ class BotInstance:
             # Check if already have position (but still log market data)
             has_open_position = any(p['symbol'] == pair for p in self.positions)
             
+            # Get current price first (before try block so we can log even if other stuff fails)
+            if pair not in self.last_prices:
+                continue
+            current_price = self.last_prices[pair]
+            
+            # Initialize variables for logging (will be populated in try block)
+            support_level = None
+            resistance_level = None
+            closest_level = None
+            all_levels_by_timeframe = {}
+            liquidity_flow = None
+            net_flow = 0
+            flow_ratio = 0.5
+            
             try:
-                # Get current price
-                if pair not in self.last_prices:
-                    continue
-                current_price = self.last_prices[pair]
-                
                 # 1. FETCH LEVELS FROM SCANNER_LEVELS TABLE
                 scanner_levels_data = None
                 try:
@@ -1246,10 +1255,6 @@ class BotInstance:
                     scanner_levels_data = None
                 
                 # Parse levels data
-                support_level = None
-                resistance_level = None
-                closest_level = None
-                all_levels_by_timeframe = {}
                 
                 if scanner_levels_data:
                     try:
@@ -1289,11 +1294,8 @@ class BotInstance:
                         logger.warning(f"❌ Error parsing scanner levels data for {pair}: {e}")
                 
                 # 2. CALCULATE NET FLOW FROM RECENT TRADES (like scanner does)
-                liquidity_flow = None
-                net_flow = 0
                 buy_volume = 0
                 sell_volume = 0
-                flow_ratio = 0.5
                 
                 try:
                     # Fetch recent trades using HTTP API (more reliable than SDK method)
@@ -1369,59 +1371,6 @@ class BotInstance:
                 except Exception as e:
                     logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}", exc_info=True)
                 
-                # 3. LOG MARKET DATA (every 5 seconds)
-                last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
-                if current_time - last_pair_update >= 5:
-                    # Build log message with all data
-                    log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
-                    
-                    # Add support level info
-                    if support_level:
-                        support_dist = ((current_price - support_level['price']) / support_level['price']) * 100
-                        log_parts.append(f"Support: ${support_level['price']:.2f} ({support_dist:+.2f}%) [{support_level['timeframe']}, {support_level['touches']} touches]")
-                    else:
-                        log_parts.append("Support: N/A")
-                    
-                    # Add resistance level info
-                    if resistance_level:
-                        resistance_dist = ((resistance_level['price'] - current_price) / current_price) * 100
-                        log_parts.append(f"Resistance: ${resistance_level['price']:.2f} ({resistance_dist:+.2f}%) [{resistance_level['timeframe']}, {resistance_level['touches']} touches]")
-                    else:
-                        log_parts.append("Resistance: N/A")
-                    
-                    # Add closest level info
-                    if closest_level:
-                        log_parts.append(f"Closest: ${closest_level['price']:.2f} ({closest_level['type']}, {closest_level['distance']:.2f}% away)")
-                    
-                    # Add liquidity flow info
-                    if liquidity_flow:
-                        flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
-                        buy_vol = liquidity_flow.get('buy_volume', 0)
-                        sell_vol = liquidity_flow.get('sell_volume', 0)
-                        log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000:.2f}K net (Buy: ${buy_vol/1_000:.2f}K, Sell: ${sell_vol/1_000:.2f}K, Ratio: {flow_ratio*100:.1f}%)")
-                    else:
-                        log_parts.append("Flow: N/A")
-                    
-                    log_message = " | ".join(log_parts)
-                    
-                    # Simple log - update in place using log_update
-                    try:
-                        await self.log_update('market_metrics', pair, log_message, {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'support_level': support_level,
-                            'resistance_level': resistance_level,
-                            'closest_level': closest_level,
-                            'liquidity_flow': liquidity_flow,
-                            'all_levels_by_timeframe': all_levels_by_timeframe
-                        })
-                        self.last_market_metrics_update_time[pair] = current_time
-                        logger.debug(f"✅ Updated market metrics log for {pair}")
-                    except Exception as log_err:
-                        logger.error(f"❌ Failed to log_update for {pair}: {log_err}", exc_info=True)
-                        # Still update timer so we don't spam errors
-                        self.last_market_metrics_update_time[pair] = current_time
-                
                 # 4. CHECK ENTRY CONDITIONS (only if no open position)
                 # Entry: Price touches support AND liquidity flow is positive
                 if has_open_position:
@@ -1473,6 +1422,59 @@ class BotInstance:
             except Exception as e:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)
                 await self.log('error', f"❌ Error analyzing support liquidity for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
+            
+            # 3. LOG MARKET DATA (every 5 seconds) - ALWAYS LOG, even if data fetching failed
+            last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
+            if current_time - last_pair_update >= 5:
+                # Build log message with all data
+                log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
+                
+                # Add support level info
+                if support_level:
+                    support_dist = ((current_price - support_level['price']) / support_level['price']) * 100
+                    log_parts.append(f"Support: ${support_level['price']:.2f} ({support_dist:+.2f}%) [{support_level['timeframe']}, {support_level['touches']} touches]")
+                else:
+                    log_parts.append("Support: N/A")
+                
+                # Add resistance level info
+                if resistance_level:
+                    resistance_dist = ((resistance_level['price'] - current_price) / current_price) * 100
+                    log_parts.append(f"Resistance: ${resistance_level['price']:.2f} ({resistance_dist:+.2f}%) [{resistance_level['timeframe']}, {resistance_level['touches']} touches]")
+                else:
+                    log_parts.append("Resistance: N/A")
+                
+                # Add closest level info
+                if closest_level:
+                    log_parts.append(f"Closest: ${closest_level['price']:.2f} ({closest_level['type']}, {closest_level['distance']:.2f}% away)")
+                
+                # Add liquidity flow info
+                if liquidity_flow:
+                    flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
+                    buy_vol = liquidity_flow.get('buy_volume', 0)
+                    sell_vol = liquidity_flow.get('sell_volume', 0)
+                    log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000:.2f}K net (Buy: ${buy_vol/1_000:.2f}K, Sell: ${sell_vol/1_000:.2f}K, Ratio: {flow_ratio*100:.1f}%)")
+                else:
+                    log_parts.append("Flow: N/A")
+                
+                log_message = " | ".join(log_parts)
+                
+                # Simple log - update in place using log_update
+                try:
+                    await self.log_update('market_metrics', pair, log_message, {
+                        'pair': pair,
+                        'current_price': current_price,
+                        'support_level': support_level,
+                        'resistance_level': resistance_level,
+                        'closest_level': closest_level,
+                        'liquidity_flow': liquidity_flow,
+                        'all_levels_by_timeframe': all_levels_by_timeframe
+                    })
+                    self.last_market_metrics_update_time[pair] = current_time
+                    logger.debug(f"✅ Updated market metrics log for {pair}")
+                except Exception as log_err:
+                    logger.error(f"❌ Failed to log_update for {pair}: {log_err}", exc_info=True)
+                    # Still update timer so we don't spam errors
+                    self.last_market_metrics_update_time[pair] = current_time
     
     async def run_default_strategy(self):
         """Default strategy (for testing)"""

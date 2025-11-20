@@ -1382,34 +1382,53 @@ class BotInstance:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")
                 elif support_level and liquidity_flow:
                     support_price = support_level['price']
-                    # Check if price is near support (within 0.15%)
+                    # Check if price is near support (within 0.1%)
                     support_distance_pct = abs(current_price - support_price) / support_price * 100
-                    support_touch_threshold = 0.15  # 0.15% wiggle room - tighter entries
+                    support_touch_threshold = 0.1  # 0.1% wiggle room - very tight entries
+                    
+                    # Minimum flow requirements
+                    min_net_flow = 5000  # Require at least $5k net flow
+                    min_buy_ratio = 0.6  # Require at least 60% buy ratio
                     
                     # Log why trade isn't happening
                     if support_distance_pct > support_touch_threshold:
                         logger.debug(f"📊 {pair} Support at ${support_price:.2f} but price too far: {support_distance_pct:.2f}% away (threshold: {support_touch_threshold}%)")
                     elif not liquidity_flow['is_bullish']:
                         logger.debug(f"📊 {pair} At support ${support_price:.2f} but flow is bearish (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
+                    elif net_flow < min_net_flow:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but net flow too low: ${net_flow/1_000:.2f}K (required: ${min_net_flow/1_000:.2f}K)")
+                    elif flow_ratio < min_buy_ratio:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but buy ratio too low: {flow_ratio*100:.1f}% (required: {min_buy_ratio*100:.0f}%)")
                     else:
-                        # Price is near support AND flow is bullish - check final conditions
-                        is_price_above_support = current_price >= support_price * 0.9985  # Within 0.15% above support
-                        is_positive_flow = net_flow > 0  # Positive net flow = buying pressure
+                        # Price is near support AND flow meets requirements - check final conditions
+                        is_price_above_support = current_price >= support_price * 0.999  # Within 0.1% above support
+                        meets_flow_requirements = net_flow >= min_net_flow and flow_ratio >= min_buy_ratio
                         
-                        if is_price_above_support and is_positive_flow:
+                        if is_price_above_support and meets_flow_requirements:
                             # TRADE SIGNAL: Open LONG position
-                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with bullish flow (${net_flow/1_000:.2f}K net, {flow_ratio*100:.1f}% buy)"
+                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with strong bullish flow (${net_flow/1_000:.2f}K net, {flow_ratio*100:.1f}% buy)"
                             logger.info(f"✅ {pair} SUPPORT LIQUIDITY SIGNAL: {reason}")
                             
                             try:
-                                success = await self.open_position(pair, 'long', current_price)
+                                # Calculate dynamic TP based on resistance level (85% of way to resistance)
+                                dynamic_tp = None
+                                if resistance_level:
+                                    resistance_price = resistance_level['price']
+                                    distance_to_resistance = resistance_price - current_price
+                                    # Take profit at 85% of the way to resistance (leave 15% buffer)
+                                    dynamic_tp = current_price + (distance_to_resistance * 0.85)
+                                    logger.info(f"🎯 {pair} Dynamic TP: ${dynamic_tp:.2f} (85% to resistance ${resistance_price:.2f})")
+                                
+                                success = await self.open_position(pair, 'long', current_price, dynamic_tp=dynamic_tp)
                                 if success:
                                     await self.log('signal', f"🟢 {pair} @ ${current_price:.2f} - {reason}", {
                                         'support_price': support_price,
                                         'support_timeframe': support_level['timeframe'],
                                         'support_touches': support_level['touches'],
                                         'net_flow': net_flow,
-                                        'flow_ratio': flow_ratio
+                                        'flow_ratio': flow_ratio,
+                                        'resistance_price': resistance_level['price'] if resistance_level else None,
+                                        'dynamic_tp': dynamic_tp
                                     })
                                 else:
                                     logger.warning(f"⚠️ Support liquidity signal triggered but position open failed for {pair}")
@@ -1417,7 +1436,7 @@ class BotInstance:
                                 logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                 await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                         else:
-                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support} (price=${current_price:.2f}, support=${support_price:.2f}), positive_flow={is_positive_flow} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
+                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support} (price=${current_price:.2f}, support=${support_price:.2f}), flow_ok={meets_flow_requirements} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
                 
             except Exception as e:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)

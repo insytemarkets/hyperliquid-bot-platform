@@ -173,6 +173,7 @@ class BotInstance:
         self.monitoring_log_ids: Dict[str, str] = {}  # Track monitoring log IDs per pair (for updating in place)
         self.market_metrics_log_ids: Dict[str, str] = {}  # Track market metrics log IDs per pair (for updating in place)
         self.last_position_update_time: Dict[str, float] = {}  # Track last position update time per pair (update every 5s)
+        self.last_market_metrics_update_time: Dict[str, float] = {}  # Track last market metrics update time per pair
         self.last_market_data_fetch: float = 0  # Track last market data fetch time
         self.cached_market_data: dict = {}  # Cache market data to avoid rate limits
         self.market_data_cache_ttl = 2  # Cache market data for 2 seconds

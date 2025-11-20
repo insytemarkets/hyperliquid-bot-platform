@@ -1405,16 +1405,22 @@ class BotInstance:
                     log_message = " | ".join(log_parts)
                     
                     # Simple log - update in place using log_update
-                    await self.log_update('market_metrics', pair, log_message, {
-                        'pair': pair,
-                        'current_price': current_price,
-                        'support_level': support_level,
-                        'resistance_level': resistance_level,
-                        'closest_level': closest_level,
-                        'liquidity_flow': liquidity_flow,
-                        'all_levels_by_timeframe': all_levels_by_timeframe
-                    })
-                    self.last_market_metrics_update_time[pair] = current_time
+                    try:
+                        await self.log_update('market_metrics', pair, log_message, {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'support_level': support_level,
+                            'resistance_level': resistance_level,
+                            'closest_level': closest_level,
+                            'liquidity_flow': liquidity_flow,
+                            'all_levels_by_timeframe': all_levels_by_timeframe
+                        })
+                        self.last_market_metrics_update_time[pair] = current_time
+                        logger.debug(f"✅ Updated market metrics log for {pair}")
+                    except Exception as log_err:
+                        logger.error(f"❌ Failed to log_update for {pair}: {log_err}", exc_info=True)
+                        # Still update timer so we don't spam errors
+                        self.last_market_metrics_update_time[pair] = current_time
                 
                 # 4. CHECK ENTRY CONDITIONS (only if no open position)
                 # Entry: Price touches support AND liquidity flow is positive

@@ -1441,10 +1441,13 @@ class BotInstance:
                         except Exception as fallback_error:
                             logger.error(f"❌ Fallback log creation also failed for {pair}: {fallback_error}")
                 
-                # 4. CHECK ENTRY CONDITIONS
+                # 4. CHECK ENTRY CONDITIONS (only if no open position)
                 # Entry: Price touches support AND liquidity flow is positive
                 # Log debug info about why trades aren't happening
-                if not support_level:
+                if has_open_position:
+                    # Skip entry logic if we already have a position
+                    pass
+                elif not support_level:
                     logger.debug(f"📊 {pair} No support level data from scanner - cannot trade")
                 elif not liquidity_flow:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")

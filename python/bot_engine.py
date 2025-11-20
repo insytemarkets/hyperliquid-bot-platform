@@ -1425,7 +1425,11 @@ class BotInstance:
             
             # 3. LOG MARKET DATA (every 5 seconds) - ALWAYS LOG, even if data fetching failed
             last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
-            if current_time - last_pair_update >= 5:
+            time_since_last_update = current_time - last_pair_update
+            logger.debug(f"📊 {pair} Market metrics check: {time_since_last_update:.1f}s since last update (threshold: 5s)")
+            
+            if time_since_last_update >= 5:
+                logger.debug(f"📊 {pair} Logging market metrics now...")
                 # Build log message with all data
                 log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
                 

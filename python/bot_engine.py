@@ -1370,10 +1370,11 @@ class BotInstance:
                 except Exception as e:
                     logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}", exc_info=True)
                 
-                # 3. LOG MARKET DATA (every 30 seconds) - UPDATE IN PLACE
+                # 3. LOG MARKET DATA (every 5 seconds) - UPDATE IN PLACE
                 # Use per-pair timer to ensure each pair updates independently
                 last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
-                if current_time - last_pair_update >= self.market_log_interval:
+                market_update_interval = 5  # Update every 5 seconds for real-time monitoring
+                if current_time - last_pair_update >= market_update_interval:
                     # Build log message with all data
                     log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
                     

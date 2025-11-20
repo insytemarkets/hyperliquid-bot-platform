@@ -1474,9 +1474,23 @@ class BotInstance:
                         'all_levels_by_timeframe': all_levels_by_timeframe
                     })
                     self.last_market_metrics_update_time[pair] = current_time
-                    logger.debug(f"✅ Updated market metrics log for {pair}")
+                    logger.info(f"✅ Updated market metrics log for {pair}: {log_message[:100]}...")
                 except Exception as log_err:
                     logger.error(f"❌ Failed to log_update for {pair}: {log_err}", exc_info=True)
+                    # Fallback: use regular log if log_update fails
+                    try:
+                        await self.log('market_data', log_message, {
+                            'pair': pair,
+                            'current_price': current_price,
+                            'support_level': support_level,
+                            'resistance_level': resistance_level,
+                            'closest_level': closest_level,
+                            'liquidity_flow': liquidity_flow,
+                            'all_levels_by_timeframe': all_levels_by_timeframe
+                        })
+                        logger.info(f"✅ Fallback: Created new market_data log for {pair}")
+                    except Exception as fallback_err:
+                        logger.error(f"❌ Fallback log also failed for {pair}: {fallback_err}")
                     # Still update timer so we don't spam errors
                     self.last_market_metrics_update_time[pair] = current_time
     

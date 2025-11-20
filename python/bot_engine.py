@@ -1370,11 +1370,9 @@ class BotInstance:
                 except Exception as e:
                     logger.warning(f"❌ Failed to calculate net flow from trades for {pair}: {e}", exc_info=True)
                 
-                # 3. LOG MARKET DATA (every 5 seconds) - UPDATE IN PLACE
-                # Use per-pair timer to ensure each pair updates independently
+                # 3. LOG MARKET DATA (every 5 seconds)
                 last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
-                market_update_interval = 5  # Update every 5 seconds for real-time monitoring
-                if current_time - last_pair_update >= market_update_interval:
+                if current_time - last_pair_update >= 5:
                     # Build log message with all data
                     log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
                     
@@ -1407,47 +1405,21 @@ class BotInstance:
                     
                     log_message = " | ".join(log_parts)
                     
-                    # Use log_update to update in place instead of creating new log entries
-                    try:
-                        await self.log_update(
-                            'market_metrics',
-                            pair,
-                            log_message,
-                            {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'support_level': support_level,
-                                'resistance_level': resistance_level,
-                                'closest_level': closest_level,
-                                'liquidity_flow': liquidity_flow,
-                                'all_levels_by_timeframe': all_levels_by_timeframe
-                            }
-                        )
-                        self.last_market_metrics_update_time[pair] = current_time
-                    except Exception as log_error:
-                        logger.error(f"❌ Failed to update market metrics log for {pair}: {log_error}", exc_info=True)
-                        # Fallback: create new log entry if update fails
-                        try:
-                            await self.log('market_data', log_message, {
-                                'pair': pair,
-                                'current_price': current_price,
-                                'support_level': support_level,
-                                'resistance_level': resistance_level,
-                                'closest_level': closest_level,
-                                'liquidity_flow': liquidity_flow,
-                                'all_levels_by_timeframe': all_levels_by_timeframe
-                            })
-                            self.last_market_metrics_update_time[pair] = current_time
-                        except Exception as fallback_error:
-                            logger.error(f"❌ Fallback log creation also failed for {pair}: {fallback_error}")
+                    # Simple log - update in place using log_update
+                    await self.log_update('market_metrics', pair, log_message, {
+                        'pair': pair,
+                        'current_price': current_price,
+                        'support_level': support_level,
+                        'resistance_level': resistance_level,
+                        'closest_level': closest_level,
+                        'liquidity_flow': liquidity_flow,
+                        'all_levels_by_timeframe': all_levels_by_timeframe
+                    })
+                    self.last_market_metrics_update_time[pair] = current_time
                 
-                # 4. CHECK ENTRY CONDITIONS (only if no open position)
+                # 4. CHECK ENTRY CONDITIONS
                 # Entry: Price touches support AND liquidity flow is positive
-                # Log debug info about why trades aren't happening
-                if has_open_position:
-                    # Skip entry logic if we already have a position
-                    pass
-                elif not support_level:
+                if not support_level:
                     logger.debug(f"📊 {pair} No support level data from scanner - cannot trade")
                 elif not liquidity_flow:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")

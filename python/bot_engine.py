@@ -1423,47 +1423,42 @@ class BotInstance:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)
                 await self.log('error', f"❌ Error analyzing support liquidity for {pair}: {str(e)}", {'error': str(e), 'error_type': type(e).__name__})
             
-            # 3. LOG MARKET DATA (every 5 seconds) - ALWAYS LOG, even if data fetching failed
-            last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
-            time_since_last_update = current_time - last_pair_update
-            logger.debug(f"📊 {pair} Market metrics check: {time_since_last_update:.1f}s since last update (threshold: 5s)")
-            
-            if time_since_last_update >= 5:
-                logger.debug(f"📊 {pair} Logging market metrics now...")
-                # Build log message with all data
-                log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
-                
-                # Add support level info
-                if support_level:
-                    support_dist = ((current_price - support_level['price']) / support_level['price']) * 100
-                    log_parts.append(f"Support: ${support_level['price']:.2f} ({support_dist:+.2f}%) [{support_level['timeframe']}, {support_level['touches']} touches]")
-                else:
-                    log_parts.append("Support: N/A")
-                
-                # Add resistance level info
-                if resistance_level:
-                    resistance_dist = ((resistance_level['price'] - current_price) / current_price) * 100
-                    log_parts.append(f"Resistance: ${resistance_level['price']:.2f} ({resistance_dist:+.2f}%) [{resistance_level['timeframe']}, {resistance_level['touches']} touches]")
-                else:
-                    log_parts.append("Resistance: N/A")
-                
-                # Add closest level info
-                if closest_level:
-                    log_parts.append(f"Closest: ${closest_level['price']:.2f} ({closest_level['type']}, {closest_level['distance']:.2f}% away)")
-                
-                # Add liquidity flow info
-                if liquidity_flow:
-                    flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
-                    buy_vol = liquidity_flow.get('buy_volume', 0)
-                    sell_vol = liquidity_flow.get('sell_volume', 0)
-                    log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000:.2f}K net (Buy: ${buy_vol/1_000:.2f}K, Sell: ${sell_vol/1_000:.2f}K, Ratio: {flow_ratio*100:.1f}%)")
-                else:
-                    log_parts.append("Flow: N/A")
-                
-                log_message = " | ".join(log_parts)
-                
-                # Simple log - update in place using log_update
-                try:
+                # 3. LOG MARKET DATA (every 5 seconds)
+                last_pair_update = self.last_market_metrics_update_time.get(pair, 0)
+                if current_time - last_pair_update >= 5:
+                    # Build log message with all data
+                    log_parts = [f"📊 {pair} @ ${current_price:.2f}"]
+                    
+                    # Add support level info
+                    if support_level:
+                        support_dist = ((current_price - support_level['price']) / support_level['price']) * 100
+                        log_parts.append(f"Support: ${support_level['price']:.2f} ({support_dist:+.2f}%) [{support_level['timeframe']}, {support_level['touches']} touches]")
+                    else:
+                        log_parts.append("Support: N/A")
+                    
+                    # Add resistance level info
+                    if resistance_level:
+                        resistance_dist = ((resistance_level['price'] - current_price) / current_price) * 100
+                        log_parts.append(f"Resistance: ${resistance_level['price']:.2f} ({resistance_dist:+.2f}%) [{resistance_level['timeframe']}, {resistance_level['touches']} touches]")
+                    else:
+                        log_parts.append("Resistance: N/A")
+                    
+                    # Add closest level info
+                    if closest_level:
+                        log_parts.append(f"Closest: ${closest_level['price']:.2f} ({closest_level['type']}, {closest_level['distance']:.2f}% away)")
+                    
+                    # Add liquidity flow info
+                    if liquidity_flow:
+                        flow_emoji = "🟢" if liquidity_flow['is_bullish'] else "🔴"
+                        buy_vol = liquidity_flow.get('buy_volume', 0)
+                        sell_vol = liquidity_flow.get('sell_volume', 0)
+                        log_parts.append(f"{flow_emoji} Flow: ${net_flow/1_000:.2f}K net (Buy: ${buy_vol/1_000:.2f}K, Sell: ${sell_vol/1_000:.2f}K, Ratio: {flow_ratio*100:.1f}%)")
+                    else:
+                        log_parts.append("Flow: N/A")
+                    
+                    log_message = " | ".join(log_parts)
+                    
+                    # Update in place using log_update
                     await self.log_update('market_metrics', pair, log_message, {
                         'pair': pair,
                         'current_price': current_price,
@@ -1473,25 +1468,6 @@ class BotInstance:
                         'liquidity_flow': liquidity_flow,
                         'all_levels_by_timeframe': all_levels_by_timeframe
                     })
-                    self.last_market_metrics_update_time[pair] = current_time
-                    logger.info(f"✅ Updated market metrics log for {pair}: {log_message[:100]}...")
-                except Exception as log_err:
-                    logger.error(f"❌ Failed to log_update for {pair}: {log_err}", exc_info=True)
-                    # Fallback: use regular log if log_update fails
-                    try:
-                        await self.log('market_data', log_message, {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'support_level': support_level,
-                            'resistance_level': resistance_level,
-                            'closest_level': closest_level,
-                            'liquidity_flow': liquidity_flow,
-                            'all_levels_by_timeframe': all_levels_by_timeframe
-                        })
-                        logger.info(f"✅ Fallback: Created new market_data log for {pair}")
-                    except Exception as fallback_err:
-                        logger.error(f"❌ Fallback log also failed for {pair}: {fallback_err}")
-                    # Still update timer so we don't spam errors
                     self.last_market_metrics_update_time[pair] = current_time
     
     async def run_default_strategy(self):

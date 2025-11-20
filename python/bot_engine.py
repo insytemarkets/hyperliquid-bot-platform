@@ -1493,8 +1493,15 @@ class BotInstance:
         """Default strategy (for testing)"""
         await self.log('info', f"🤖 Running default strategy for {len(self.strategy['pairs'])} pairs", {})
     
-    async def open_position(self, pair: str, side: str, price: float) -> bool:
-        """Open a new position - returns True if successful, False otherwise"""
+    async def open_position(self, pair: str, side: str, price: float, dynamic_tp: float = None) -> bool:
+        """Open a new position - returns True if successful, False otherwise
+        
+        Args:
+            pair: Trading pair symbol
+            side: 'long' or 'short'
+            price: Entry price
+            dynamic_tp: Optional dynamic take profit price (overrides percentage-based TP)
+        """
         try:
             position_size_usd = self.strategy['position_size']  # Position size in USD
             stop_loss_pct = self.strategy['stop_loss_percent']
@@ -1509,10 +1516,20 @@ class BotInstance:
             # Calculate SL/TP
             if side == 'long':
                 stop_loss = price * (1 - stop_loss_pct / 100)
-                take_profit = price * (1 + take_profit_pct / 100)
+                # Use dynamic TP if provided, otherwise use percentage-based TP
+                if dynamic_tp is not None:
+                    take_profit = dynamic_tp
+                    logger.info(f"🎯 Using dynamic TP: ${take_profit:.2f} (instead of ${price * (1 + take_profit_pct / 100):.2f} from {take_profit_pct}%)")
+                else:
+                    take_profit = price * (1 + take_profit_pct / 100)
             else:
                 stop_loss = price * (1 + stop_loss_pct / 100)
-                take_profit = price * (1 - take_profit_pct / 100)
+                # Use dynamic TP if provided, otherwise use percentage-based TP
+                if dynamic_tp is not None:
+                    take_profit = dynamic_tp
+                    logger.info(f"🎯 Using dynamic TP: ${take_profit:.2f} (instead of ${price * (1 - take_profit_pct / 100):.2f} from {take_profit_pct}%)")
+                else:
+                    take_profit = price * (1 - take_profit_pct / 100)
             
             # Insert position
             position_id = str(uuid.uuid4())  # Generate ID for position

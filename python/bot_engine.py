@@ -1430,9 +1430,9 @@ class BotInstance:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")
                 elif support_level and liquidity_flow:
                     support_price = support_level['price']
-                    # Check if price is near support (within 0.5%)
+                    # Check if price is near support (within 0.15%)
                     support_distance_pct = abs(current_price - support_price) / support_price * 100
-                    support_touch_threshold = 0.5  # 0.5% wiggle room
+                    support_touch_threshold = 0.15  # 0.15% wiggle room - tighter entries
                     
                     # Log why trade isn't happening
                     if support_distance_pct > support_touch_threshold:
@@ -1441,7 +1441,7 @@ class BotInstance:
                         logger.debug(f"📊 {pair} At support ${support_price:.2f} but flow is bearish (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
                     else:
                         # Price is near support AND flow is bullish - check final conditions
-                        is_price_above_support = current_price >= support_price * 0.995  # Within 0.5% above support
+                        is_price_above_support = current_price >= support_price * 0.9985  # Within 0.15% above support
                         is_positive_flow = net_flow > 0  # Positive net flow = buying pressure
                         
                         if is_price_above_support and is_positive_flow:

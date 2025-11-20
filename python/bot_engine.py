@@ -1408,21 +1408,38 @@ class BotInstance:
                     log_message = " | ".join(log_parts)
                     
                     # Use log_update to update in place instead of creating new log entries
-                    await self.log_update(
-                        'market_metrics',
-                        pair,
-                        log_message,
-                        {
-                            'pair': pair,
-                            'current_price': current_price,
-                            'support_level': support_level,
-                            'resistance_level': resistance_level,
-                            'closest_level': closest_level,
-                            'liquidity_flow': liquidity_flow,
-                            'all_levels_by_timeframe': all_levels_by_timeframe
-                        }
-                    )
-                    self.last_market_metrics_update_time[pair] = current_time
+                    try:
+                        await self.log_update(
+                            'market_metrics',
+                            pair,
+                            log_message,
+                            {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'support_level': support_level,
+                                'resistance_level': resistance_level,
+                                'closest_level': closest_level,
+                                'liquidity_flow': liquidity_flow,
+                                'all_levels_by_timeframe': all_levels_by_timeframe
+                            }
+                        )
+                        self.last_market_metrics_update_time[pair] = current_time
+                    except Exception as log_error:
+                        logger.error(f"❌ Failed to update market metrics log for {pair}: {log_error}", exc_info=True)
+                        # Fallback: create new log entry if update fails
+                        try:
+                            await self.log('market_data', log_message, {
+                                'pair': pair,
+                                'current_price': current_price,
+                                'support_level': support_level,
+                                'resistance_level': resistance_level,
+                                'closest_level': closest_level,
+                                'liquidity_flow': liquidity_flow,
+                                'all_levels_by_timeframe': all_levels_by_timeframe
+                            })
+                            self.last_market_metrics_update_time[pair] = current_time
+                        except Exception as fallback_error:
+                            logger.error(f"❌ Fallback log creation also failed for {pair}: {fallback_error}")
                 
                 # 4. CHECK ENTRY CONDITIONS
                 # Entry: Price touches support AND liquidity flow is positive
@@ -2018,8 +2035,11 @@ class BotInstance:
                 if result.data and len(result.data) > 0:
                     log_id_dict[pair] = result.data[0]['id']
                     logger.debug(f"Created new {update_type} log for {pair}")
+                else:
+                    logger.warning(f"⚠️ Failed to create new {update_type} log for {pair} - no data returned")
         except Exception as e:
-            logger.error(f"Failed to log_update for {pair}: {e}")
+            logger.error(f"❌ Failed to log_update for {pair}: {e}", exc_info=True)
+            raise  # Re-raise so caller knows it failed
 
 
 async def main():

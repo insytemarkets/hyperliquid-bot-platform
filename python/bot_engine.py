@@ -1219,10 +1219,8 @@ class BotInstance:
             return
         
         for pair in self.strategy['pairs']:
-            # Skip if already have position
+            # Check if already have position (but still log market data)
             has_open_position = any(p['symbol'] == pair for p in self.positions)
-            if has_open_position:
-                continue
             
             try:
                 # Get current price
@@ -1418,9 +1416,12 @@ class BotInstance:
                     })
                     self.last_market_metrics_update_time[pair] = current_time
                 
-                # 4. CHECK ENTRY CONDITIONS
+                # 4. CHECK ENTRY CONDITIONS (only if no open position)
                 # Entry: Price touches support AND liquidity flow is positive
-                if not support_level:
+                if has_open_position:
+                    # Skip entry logic if we already have a position
+                    pass
+                elif not support_level:
                     logger.debug(f"📊 {pair} No support level data from scanner - cannot trade")
                 elif not liquidity_flow:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")

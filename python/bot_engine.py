@@ -1382,9 +1382,9 @@ class BotInstance:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")
                 elif support_level and liquidity_flow:
                     support_price = support_level['price']
-                    # Check if price is near support (within 0.1%)
+                    # Check if price is near support (within 0.075%)
                     support_distance_pct = abs(current_price - support_price) / support_price * 100
-                    support_touch_threshold = 0.1  # 0.1% wiggle room - very tight entries
+                    support_touch_threshold = 0.075  # 0.075% wiggle room - extremely tight entries
                     
                     # Minimum flow requirements
                     min_net_flow = 5000  # Require at least $5k net flow
@@ -1401,7 +1401,7 @@ class BotInstance:
                         logger.debug(f"📊 {pair} At support ${support_price:.2f} but buy ratio too low: {flow_ratio*100:.1f}% (required: {min_buy_ratio*100:.0f}%)")
                     else:
                         # Price is near support AND flow meets requirements - check final conditions
-                        is_price_above_support = current_price >= support_price * 0.999  # Within 0.1% above support
+                        is_price_above_support = current_price >= support_price * 0.99925  # Within 0.075% above support
                         meets_flow_requirements = net_flow >= min_net_flow and flow_ratio >= min_buy_ratio
                         
                         if is_price_above_support and meets_flow_requirements:
@@ -1412,12 +1412,30 @@ class BotInstance:
                             try:
                                 # Calculate dynamic TP based on resistance level (85% of way to resistance)
                                 dynamic_tp = None
+                                min_tp_distance_pct = 0.3  # Require at least 0.3% profit minimum
+                                
                                 if resistance_level:
                                     resistance_price = resistance_level['price']
                                     distance_to_resistance = resistance_price - current_price
-                                    # Take profit at 85% of the way to resistance (leave 15% buffer)
-                                    dynamic_tp = current_price + (distance_to_resistance * 0.85)
-                                    logger.info(f"🎯 {pair} Dynamic TP: ${dynamic_tp:.2f} (85% to resistance ${resistance_price:.2f})")
+                                    distance_pct = (distance_to_resistance / current_price) * 100
+                                    
+                                    # Only use dynamic TP if resistance is far enough away
+                                    if distance_pct >= 0.5:  # Resistance must be at least 0.5% away
+                                        # Take profit at 85% of the way to resistance (leave 15% buffer)
+                                        dynamic_tp = current_price + (distance_to_resistance * 0.85)
+                                        tp_distance_pct = ((dynamic_tp - current_price) / current_price) * 100
+                                        
+                                        # Ensure minimum TP distance
+                                        if tp_distance_pct < min_tp_distance_pct:
+                                            logger.info(f"⚠️ {pair} Calculated TP too close ({tp_distance_pct:.2f}%), using minimum {min_tp_distance_pct}%")
+                                            dynamic_tp = current_price * (1 + min_tp_distance_pct / 100)
+                                            tp_distance_pct = min_tp_distance_pct
+                                        
+                                        logger.info(f"🎯 {pair} Dynamic TP: ${dynamic_tp:.2f} ({tp_distance_pct:.2f}% profit, 85% to resistance ${resistance_price:.2f})")
+                                    else:
+                                        logger.info(f"⚠️ {pair} Resistance too close ({distance_pct:.2f}%), using percentage-based TP")
+                                        # Fall back to percentage-based TP
+                                        dynamic_tp = None
                                 
                                 success = await self.open_position(pair, 'long', current_price, dynamic_tp=dynamic_tp)
                                 if success:

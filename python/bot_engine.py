@@ -1503,7 +1503,14 @@ class BotInstance:
                                 logger.error(f"❌ Exception calling open_position for {pair}: {open_error}", exc_info=True)
                                 await self.log('error', f"❌ Exception opening position for {pair}: {str(open_error)}", {'error': str(open_error)})
                         else:
-                            logger.debug(f"📊 {pair} Near support but conditions not met: price_above={is_price_above_support} (price=${current_price:.2f}, support=${support_price:.2f}), flow_ok={meets_flow_requirements} (net_flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%)")
+                            failed_checks = []
+                            if not is_price_above_support:
+                                failed_checks.append("price_not_above_support")
+                            if not meets_flow_requirements:
+                                failed_checks.append("flow_requirements")
+                            if not meets_quality_filters:
+                                failed_checks.append("quality_filters")
+                            logger.debug(f"📊 {pair} Near support but conditions not met: {', '.join(failed_checks)} | price=${current_price:.2f}, support=${support_price:.2f}, flow=${net_flow/1_000:.2f}K, ratio={flow_ratio*100:.1f}%, volume_ratio={volume_ratio:.2f}x, touches={support_touches}, tf={support_timeframe}")
                 
             except Exception as e:
                 logger.error(f"❌ Error in support liquidity analysis for {pair}: {e}", exc_info=True)

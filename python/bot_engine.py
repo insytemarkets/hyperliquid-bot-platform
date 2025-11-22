@@ -1324,10 +1324,15 @@ class BotInstance:
                             recent_trades = None
                     
                     if recent_trades and isinstance(recent_trades, list) and len(recent_trades) > 0:
-                        # Calculate net flow from trades
+                        # Calculate net flow from trades and volume metrics
                         # 'B' = bid (buy), 'A' = ask (sell)
                         trade_count = 0
-                        for trade in recent_trades[:100]:  # Use last 100 trades
+                        recent_volume_total = 0
+                        all_volumes = []  # Track volumes for average calculation
+                        
+                        # Process last 500 trades for volume average (or all available if less)
+                        max_trades_for_avg = min(500, len(recent_trades))
+                        for trade in recent_trades[:max_trades_for_avg]:
                             try:
                                 # Handle both dict and object formats
                                 if isinstance(trade, dict):
@@ -1341,12 +1346,17 @@ class BotInstance:
                                 
                                 if price > 0 and size > 0:
                                     volume = price * size
-                                    trade_count += 1
+                                    all_volumes.append(volume)
                                     
-                                    if side == 'B':  # Bid = buy
-                                        buy_volume += volume
-                                    elif side == 'A':  # Ask = sell
-                                        sell_volume += volume
+                                    # Only count first 100 for flow calculation
+                                    if trade_count < 100:
+                                        trade_count += 1
+                                        recent_volume_total += volume
+                                        
+                                        if side == 'B':  # Bid = buy
+                                            buy_volume += volume
+                                        elif side == 'A':  # Ask = sell
+                                            sell_volume += volume
                             except Exception as trade_error:
                                 logger.debug(f"Error processing trade for {pair}: {trade_error}")
                                 continue
@@ -1356,14 +1366,22 @@ class BotInstance:
                             net_flow = buy_volume - sell_volume  # Positive = buying pressure
                             flow_ratio = buy_volume / total_volume  # >0.5 = bullish
                             
+                            # Calculate volume average for confirmation
+                            avg_volume = sum(all_volumes) / len(all_volumes) if all_volumes else 0
+                            volume_ratio = recent_volume_total / avg_volume if avg_volume > 0 else 1.0
+                            
                             liquidity_flow = {
                                 'net_flow': net_flow,
                                 'buy_volume': buy_volume,
                                 'sell_volume': sell_volume,
                                 'flow_ratio': flow_ratio,
-                                'is_bullish': net_flow > 0  # Positive net flow = bullish
+                                'is_bullish': net_flow > 0,  # Positive net flow = bullish
+                                'total_volume': total_volume,
+                                'recent_volume': recent_volume_total,
+                                'avg_volume': avg_volume,
+                                'volume_ratio': volume_ratio  # Recent vs average
                             }
-                            logger.debug(f"✅ Calculated flow for {pair}: net_flow=${net_flow/1_000:.2f}K, buy=${buy_volume/1_000:.2f}K, sell=${sell_volume/1_000:.2f}K, ratio={flow_ratio*100:.1f}%")
+                            logger.debug(f"✅ Calculated flow for {pair}: net_flow=${net_flow/1_000:.2f}K, buy=${buy_volume/1_000:.2f}K, sell=${sell_volume/1_000:.2f}K, ratio={flow_ratio*100:.1f}%, volume_ratio={volume_ratio:.2f}x")
                         else:
                             logger.debug(f"⚠️ No valid trades found for {pair} (processed {trade_count} trades)")
                     else:
@@ -1382,6 +1400,9 @@ class BotInstance:
                     logger.debug(f"📊 {pair} Has support level but no liquidity flow data available - cannot trade")
                 elif support_level and liquidity_flow:
                     support_price = support_level['price']
+                    support_timeframe = support_level.get('timeframe', 'unknown')
+                    support_touches = support_level.get('touches', 1)
+                    
                     # Check if price is near support (within 0.075%)
                     support_distance_pct = abs(current_price - support_price) / support_price * 100
                     support_touch_threshold = 0.075  # 0.075% wiggle room - extremely tight entries
@@ -1389,6 +1410,20 @@ class BotInstance:
                     # Minimum flow requirements
                     min_net_flow = 5000  # Require at least $5k net flow
                     min_buy_ratio = 0.6  # Require at least 60% buy ratio
+                    
+                    # Quality filters to avoid dead zones
+                    min_support_touches = 3  # Require at least 3 touches for strong support
+                    min_volume_ratio = 0.7  # Recent volume must be at least 70% of average
+                    min_total_volume = 10000  # Minimum $10k total volume (safety net)
+                    
+                    # Timeframe weights (prefer higher timeframes)
+                    timeframe_weights = {'1h': 3, '30m': 2, '15m': 1}
+                    timeframe_weight = timeframe_weights.get(support_timeframe, 1)
+                    min_timeframe_weight = 2  # Prefer 30m+ timeframes
+                    
+                    # Get volume metrics
+                    total_volume = liquidity_flow.get('total_volume', 0)
+                    volume_ratio = liquidity_flow.get('volume_ratio', 0)
                     
                     # Log why trade isn't happening
                     if support_distance_pct > support_touch_threshold:
@@ -1399,14 +1434,28 @@ class BotInstance:
                         logger.debug(f"📊 {pair} At support ${support_price:.2f} but net flow too low: ${net_flow/1_000:.2f}K (required: ${min_net_flow/1_000:.2f}K)")
                     elif flow_ratio < min_buy_ratio:
                         logger.debug(f"📊 {pair} At support ${support_price:.2f} but buy ratio too low: {flow_ratio*100:.1f}% (required: {min_buy_ratio*100:.0f}%)")
+                    elif support_touches < min_support_touches:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but support too weak: {support_touches} touches (required: {min_support_touches})")
+                    elif total_volume < min_total_volume:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but total volume too low: ${total_volume/1_000:.2f}K (required: ${min_total_volume/1_000:.2f}K)")
+                    elif volume_ratio < min_volume_ratio:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but volume ratio too low: {volume_ratio:.2f}x (required: {min_volume_ratio}x) - DEAD ZONE DETECTED")
+                    elif timeframe_weight < min_timeframe_weight:
+                        logger.debug(f"📊 {pair} At support ${support_price:.2f} but timeframe too low: {support_timeframe} (weight: {timeframe_weight}, prefer 30m+)")
                     else:
-                        # Price is near support AND flow meets requirements - check final conditions
+                        # Price is near support AND all quality filters pass - check final conditions
                         is_price_above_support = current_price >= support_price * 0.99925  # Within 0.075% above support
                         meets_flow_requirements = net_flow >= min_net_flow and flow_ratio >= min_buy_ratio
+                        meets_quality_filters = (
+                            support_touches >= min_support_touches and
+                            total_volume >= min_total_volume and
+                            volume_ratio >= min_volume_ratio and
+                            timeframe_weight >= min_timeframe_weight
+                        )
                         
-                        if is_price_above_support and meets_flow_requirements:
+                        if is_price_above_support and meets_flow_requirements and meets_quality_filters:
                             # TRADE SIGNAL: Open LONG position
-                            reason = f"Support bounce at ${support_price:.2f} ({support_level['timeframe']}, {support_level['touches']} touches) with strong bullish flow (${net_flow/1_000:.2f}K net, {flow_ratio*100:.1f}% buy)"
+                            reason = f"Support bounce at ${support_price:.2f} ({support_timeframe}, {support_touches} touches) with strong bullish flow (${net_flow/1_000:.2f}K net, {flow_ratio*100:.1f}% buy, {volume_ratio:.2f}x volume)"
                             logger.info(f"✅ {pair} SUPPORT LIQUIDITY SIGNAL: {reason}")
                             
                             try:
